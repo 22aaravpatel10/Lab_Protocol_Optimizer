@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Biomek i7 Protocol Optimizer</title>
+<style>
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #22263a;
+  --border: #2e3352;
+  --accent: #4f8ef7;
+  --accent2: #7c5cbf;
+  --green: #22c55e;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --text: #e2e8f0;
+  --muted: #64748b;
+  --font: 'Inter', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+body { background: var(--bg); color: var(--text); font-family: var(--font);
+  font-size: 13px; line-height: 1.5; height: 100vh; overflow: hidden; }
+/* ── Layout ── */
+.app { display: grid; grid-template-rows: 48px 1fr; height: 100vh; }
+.topbar { background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 16px; gap: 12px; z-index: 100; }
+.topbar h1 { font-size: 14px; font-weight: 600; color: var(--text);
+  display: flex; align-items: center; gap: 8px; }
+.topbar h1 span.badge { font-size: 10px; background: var(--accent2);
+  color: white; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+.tabs { display: flex; gap: 2px; margin-left: 24px; }
+.tab-btn { padding: 6px 14px; border: none; background: transparent;
+  color: var(--muted); cursor: pointer; font-size: 13px; border-radius: 6px;
+  transition: all .15s; font-weight: 500; }
+.tab-btn:hover { background: var(--surface2); color: var(--text); }
+.tab-btn.active { background: var(--accent); color: white; }
+.spacer { flex: 1; }
+.btn { padding: 6px 14px; border: 1px solid var(--border); background: var(--surface2);
+  color: var(--text); border-radius: 6px; cursor: pointer; font-size: 12px;
+  font-weight: 500; transition: all .15s; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+.btn.primary:hover { background: #3a7de0; }
+.btn.success { background: var(--green); border-color: var(--green); color: white; }
+.btn.danger { background: var(--red); border-color: var(--red); color: white; }
+/* ── Main panels ── */
+.main { display: grid; grid-template-columns: 260px 1fr 300px; height: calc(100vh - 48px); overflow: hidden; }
+.panel { overflow-y: auto; overflow-x: hidden; height: 100%; }
+.panel-left { background: var(--surface); border-right: 1px solid var(--border); }
+.panel-center { background: var(--bg); display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.panel-right { background: var(--surface); border-left: 1px solid var(--border); }
+/* ── Sections ── */
+.section { padding: 12px; border-bottom: 1px solid var(--border); }
+.section-title { font-size: 10px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px; }
+.section-title span.dot { width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); display: inline-block; }
+/* ── Layer tabs inside center panel ── */
+.layer-content { display: none; flex: 1; min-height: 0; overflow: hidden; }
+.layer-content.active { display: flex; flex-direction: column; overflow: hidden; }
+/* ═══════════════════════════════ LAYER 1 ═══════════════════════════════ */
+#layer1 { padding: 0; }
+.deck-header { padding: 10px 14px; background: var(--surface);
+  border-bottom: 1px solid var(--border); display: flex; align-items: center;
+  gap: 10px; flex-shrink: 0; }
+.deck-header h2 { font-size: 13px; font-weight: 600; }
+.deck-wrap { flex: 1; overflow: auto; padding: 20px; display: flex;
+  align-items: flex-start; justify-content: center; }
+.deck-canvas { position: relative; }
+.deck-grid { display: grid; grid-template-columns: repeat(9, 68px);
+  grid-template-rows: repeat(5, 72px); gap: 4px; }
+.deck-cell { width: 68px; height: 72px; border: 1.5px dashed var(--border);
+  border-radius: 6px; position: relative; cursor: pointer; transition: all .15s;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-size: 9px; color: var(--muted); }
+.deck-cell:hover { border-color: var(--accent); background: rgba(79,142,247,.06); }
+.deck-cell.occupied { border-style: solid; cursor: grab; }
+.deck-cell.drag-over { border-color: var(--green); background: rgba(34,197,94,.1); }
+.deck-cell.drag-source { opacity: .4; }
+.deck-cell .pos-num { position: absolute; top: 2px; left: 4px; font-size: 8px;
+  color: var(--muted); font-family: var(--mono); }
+.deck-cell .lw-icon { font-size: 18px; }
+.deck-cell .lw-label { font-size: 8px; text-align: center; color: var(--text);
+  max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-cell .lw-role { font-size: 7px; padding: 1px 4px; border-radius: 3px;
+  margin-top: 1px; font-weight: 600; text-transform: uppercase; }
+.role-source      { background: rgba(79,142,247,.2); color: var(--accent); }
+.role-destination { background: rgba(124,92,191,.2); color: #a78bfa; }
+.role-tips_clean  { background: rgba(34,197,94,.2); color: var(--green); }
+.role-tips_dirty  { background: rgba(245,158,11,.2); color: var(--amber); }
+.role-waste       { background: rgba(100,116,139,.2); color: var(--muted); }
+.role-reservoir   { background: rgba(239,68,68,.2); color: var(--red); }
+.role-generic     { background: rgba(100,116,139,.15); color: var(--muted); }
+/* Axis labels */
+.deck-col-labels { display: grid; grid-template-columns: repeat(9, 68px); gap: 4px;
+  padding: 0 0 4px 0; }
+.deck-row-labels { display: grid; grid-template-rows: repeat(5, 72px); gap: 4px;
+  padding: 0 4px 0 0; align-items: center; }
+.deck-axis-label { font-size: 9px; color: var(--muted); text-align: center;
+  font-family: var(--mono); font-weight: 600; }
+.deck-outer { display: flex; flex-direction: column; }
+.deck-h { display: flex; }
+.deck-ruler { width: 20px; }
+/* ═══════════════════════════════ LAYER 2 ═══════════════════════════════ */
+#layer2 { padding: 0; }
+.proto-header { padding: 10px 14px; background: var(--surface);
+  border-bottom: 1px solid var(--border); display: flex; align-items: center;
+  gap: 10px; flex-shrink: 0; }
+.proto-body { flex: 1; display: grid; grid-template-columns: 1fr 340px; min-height: 0; overflow: hidden; }
+.step-list { overflow-y: auto; padding: 14px; }
+.step-card { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 6px;
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  transition: border-color .15s; position: relative; }
+.step-card:hover { border-color: var(--accent); }
+.step-card.selected { border-color: var(--accent); background: rgba(79,142,247,.06); }
+.step-num { font-size: 9px; font-family: var(--mono); color: var(--muted);
+  min-width: 28px; padding-top: 1px; }
+.step-type-badge { font-size: 9px; font-weight: 700; padding: 2px 6px;
+  border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
+.st-PICK_TIPS    { background: rgba(34,197,94,.15); color: var(--green); }
+.st-ASPIRATE     { background: rgba(79,142,247,.15); color: var(--accent); }
+.st-DISPENSE     { background: rgba(124,92,191,.15); color: #a78bfa; }
+.st-DISCARD_TIPS { background: rgba(239,68,68,.15); color: var(--red); }
+.st-PARK_TIPS    { background: rgba(245,158,11,.15); color: var(--amber); }
+.st-MIX          { background: rgba(20,184,166,.15); color: #2dd4bf; }
+.st-DELAY        { background: rgba(100,116,139,.15); color: var(--muted); }
+.step-desc { flex: 1; font-size: 11px; color: var(--text); }
+.step-time { font-size: 10px; font-family: var(--mono); color: var(--muted); }
+.step-travel { font-size: 10px; color: var(--amber); }
+.step-err { font-size: 10px; color: var(--red); font-weight: 600; }
+/* Sim panel */
+.sim-panel { background: var(--surface2); border-left: 1px solid var(--border);
+  overflow-y: auto; padding: 14px; }
+.sim-stat { display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--border); }
+.sim-stat:last-child { border-bottom: none; }
+.sim-stat label { color: var(--muted); font-size: 11px; }
+.sim-stat value { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.tip-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; margin-top: 8px; }
+.tip-dot { width: 100%; aspect-ratio: 1; border-radius: 3px; }
+.tip-clean { background: var(--green); }
+.tip-dirty { background: var(--amber); }
+.tip-in_use { background: var(--accent); }
+.tip-empty { background: var(--border); }
+/* Timeline bar */
+.timeline { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+.timeline-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 3px; transition: width .3s; }
+/* ═══════════════════════════════ LAYER 3 ═══════════════════════════════ */
+#layer3 { padding: 0; }
+.opt-header { padding: 10px 14px; background: var(--surface);
+  border-bottom: 1px solid var(--border); display: flex; align-items: center;
+  gap: 10px; flex-shrink: 0; }
+.opt-body { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: 0; overflow: hidden; }
+.opt-col { overflow-y: auto; padding: 14px; }
+.opt-col:first-child { border-right: 1px solid var(--border); }
+.method-card { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; margin-bottom: 10px; transition: border-color .15s; }
+.method-card.winner { border-color: var(--green); }
+.method-name { font-size: 12px; font-weight: 700; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 8px; }
+.winner-badge { font-size: 9px; background: var(--green); color: white;
+  padding: 2px 7px; border-radius: 10px; }
+.metric-row { display: flex; justify-content: space-between;
+  font-size: 11px; padding: 3px 0; }
+.metric-row .label { color: var(--muted); }
+.metric-row .val { font-family: var(--mono); font-weight: 600; }
+.improvement-bar { margin-top: 8px; }
+.bar-label { font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+.bar-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width .5s; }
+.bar-cvrp     { background: var(--green); }
+.bar-row_major { background: var(--red); }
+.bar-greedy   { background: var(--amber); }
+.bar-lap      { background: var(--accent); }
+/* Route visualization */
+.route-vis { margin-top: 10px; }
+.route-row { display: flex; gap: 3px; flex-wrap: wrap; margin-bottom: 4px; align-items: center; }
+.route-label { font-size: 9px; color: var(--muted); font-family: var(--mono);
+  min-width: 40px; }
+.job-chip { font-size: 8px; font-family: var(--mono); padding: 1px 5px;
+  border-radius: 3px; background: var(--surface2); border: 1px solid var(--border); }
+/* Heatmap */
+.heatmap-wrap { overflow: auto; }
+canvas { display: block; }
+/* ── Right panel ── */
+.labware-palette { padding: 10px; }
+.lw-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px;
+  cursor: grab; transition: all .15s; user-select: none; background: var(--surface2); }
+.lw-item:hover { border-color: var(--accent); }
+.lw-item:active { cursor: grabbing; }
+.lw-item .icon { font-size: 16px; }
+.lw-item .info { flex: 1; }
+.lw-item .name { font-size: 11px; font-weight: 600; }
+.lw-item .type-key { font-size: 9px; color: var(--muted); font-family: var(--mono); }
+/* Role selector */
+.role-select { width: 100%; padding: 5px 8px; background: var(--surface2);
+  border: 1px solid var(--border); color: var(--text); border-radius: 5px;
+  font-size: 11px; margin-bottom: 6px; }
+/* Property panel */
+.prop-row { display: flex; justify-content: space-between; padding: 4px 0;
+  border-bottom: 1px solid rgba(46,51,82,.5); font-size: 11px; }
+.prop-row:last-child { border-bottom: none; }
+.prop-row .pk { color: var(--muted); }
+.prop-row .pv { font-family: var(--mono); font-weight: 600; }
+/* Inputs */
+.field-group { margin-bottom: 10px; }
+.field-group label { display: block; font-size: 10px; color: var(--muted);
+  margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+.field-group input, .field-group select {
+  width: 100%; padding: 6px 8px; background: var(--surface2);
+  border: 1px solid var(--border); color: var(--text); border-radius: 5px;
+  font-size: 12px; font-family: inherit; }
+.field-group input:focus, .field-group select:focus {
+  outline: none; border-color: var(--accent); }
+/* Toast */
+.toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; }
+.toast { background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); padding: 10px 16px; border-radius: 8px; margin-top: 8px;
+  font-size: 12px; animation: slideIn .2s ease; max-width: 340px; }
+.toast.success { border-color: var(--green); }
+.toast.error   { border-color: var(--red); }
+.toast.info    { border-color: var(--accent); }
+@keyframes slideIn { from { transform: translateX(20px); opacity: 0; }
+                     to   { transform: translateX(0); opacity: 1; } }
+/* Spinner */
+.spinner { display: inline-block; width: 14px; height: 14px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6);
+  z-index: 200; display: flex; align-items: center; justify-content: center; }
+.modal { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px; min-width: 340px; max-width: 500px; }
+.modal h3 { margin-bottom: 14px; font-size: 14px; }
+.modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+/* Info chips */
+.chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10px;
+  padding: 2px 8px; border-radius: 10px; background: var(--surface2);
+  border: 1px solid var(--border); font-weight: 500; }
+.chip.green { background: rgba(34,197,94,.1); border-color: var(--green); color: var(--green); }
+.chip.amber { background: rgba(245,158,11,.1); border-color: var(--amber); color: var(--amber); }
+.chip.blue  { background: rgba(79,142,247,.1); border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="app">
+<!-- ── Topbar ── -->
+<div class="topbar">
+  <h1>🤖 Biomek i7 Protocol Optimizer <span class="badge">Wu et al. 2025 + Spatial</span></h1>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchLayer(1)">① Deck Layout</button>
+    <button class="tab-btn" onclick="switchLayer(2)">② Protocol Designer</button>
+    <button class="tab-btn" onclick="switchLayer(3)">③ CVRP Optimizer</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn" onclick="loadPreset('media_change_96')">📋 Media Change Preset</button>
+  <button class="btn" onclick="loadPreset('serial_dilution')">🧪 Serial Dilution Preset</button>
+</div>
+
+<!-- ── Main ── -->
+<div class="main">
+
+<!-- Left panel -->
+<div class="panel panel-left" id="left-panel">
+
+  <!-- Layer 1 left: Labware palette -->
+  <div id="left-layer1">
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>Labware Palette</div>
+      <div class="field-group">
+        <label>Assign Role</label>
+        <select class="role-select" id="current-role">
+          <option value="generic">Generic</option>
+          <option value="source">Source Plate</option>
+          <option value="destination">Destination Plate</option>
+          <option value="tips_clean">Tips (Clean)</option>
+          <option value="tips_dirty">Tips (Dirty)</option>
+          <option value="waste">Waste</option>
+          <option value="reservoir">Reservoir</option>
+        </select>
+      </div>
+      <div class="labware-palette" id="palette"></div>
+    </div>
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>Selected</div>
+      <div id="sel-props" style="color:var(--muted);font-size:11px;">Click a deck cell</div>
+    </div>
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>Deck Info</div>
+      <div class="prop-row"><span class="pk">Positions</span><span class="pv">45 (9×5)</span></div>
+      <div class="prop-row"><span class="pk">Pitch X</span><span class="pv">140 mm</span></div>
+      <div class="prop-row"><span class="pk">Pitch Y</span><span class="pv">100 mm</span></div>
+      <div class="prop-row"><span class="pk">SBS Plate</span><span class="pv">127.76×85.48 mm</span></div>
+      <div class="prop-row"><span class="pk">Arm speed</span><span class="pv">~300 mm/s</span></div>
+    </div>
+  </div>
+
+  <!-- Layer 2 left: Protocol controls -->
+  <div id="left-layer2" style="display:none;">
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>Protocol Template</div>
+      <div class="field-group">
+        <label>Wells to process</label>
+        <select id="proto-n-wells" class="role-select">
+          <option value="8">8 wells (1 column)</option>
+          <option value="24">24 wells (3 columns)</option>
+          <option value="48">48 wells (half plate)</option>
+          <option value="96" selected>96 wells (full plate)</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>Aspirate volume (µL)</label>
+        <input type="number" id="proto-asp-vol" value="200" min="1" max="1000">
+      </div>
+      <div class="field-group">
+        <label>Dispense volume (µL)</label>
+        <input type="number" id="proto-disp-vol" value="200" min="1" max="1000">
+      </div>
+      <button class="btn primary" style="width:100%" onclick="buildMediaChange()">▶ Build & Simulate</button>
+    </div>
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>Step Types</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;">
+        <span class="step-type-badge st-PICK_TIPS">Pick Tips</span>
+        <span class="step-type-badge st-ASPIRATE">Aspirate</span>
+        <span class="step-type-badge st-DISPENSE">Dispense</span>
+        <span class="step-type-badge st-DISCARD_TIPS">Discard</span>
+        <span class="step-type-badge st-PARK_TIPS">Park Tips</span>
+        <span class="step-type-badge st-MIX">Mix</span>
+        <span class="step-type-badge st-DELAY">Delay</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layer 3 left: Optimizer controls -->
+  <div id="left-layer3" style="display:none;">
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>Task Matrix</div>
+      <div class="field-group">
+        <label>Source wells</label>
+        <select id="opt-n-src" class="role-select">
+          <option value="24">24 (4×6)</option>
+          <option value="96" selected>96 (8×12)</option>
+          <option value="384">384 (16×24)</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>Destination wells</label>
+        <select id="opt-n-dst" class="role-select">
+          <option value="24">24 (4×6)</option>
+          <option value="96" selected>96 (8×12)</option>
+          <option value="384">384 (16×24)</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>Transfer density</label>
+        <input type="range" id="opt-density" min="0.05" max="1.0" step="0.05" value="0.3"
+          oninput="document.getElementById('density-val').textContent=(+this.value*100).toFixed(0)+'%'">
+        <span id="density-val" style="font-size:11px;color:var(--accent);">30%</span>
+      </div>
+      <div class="field-group">
+        <label>Volume per transfer (µL)</label>
+        <input type="number" id="opt-vol" value="100" min="1" max="1000">
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>Cost Weights</div>
+      <div class="field-group">
+        <label>α — Plate adjacency weight</label>
+        <input type="number" id="opt-alpha" value="1.0" step="0.1" min="0">
+      </div>
+      <div class="field-group">
+        <label>β — Deck travel weight (1/mm·s)</label>
+        <input type="number" id="opt-beta" value="0.00333" step="0.001" min="0">
+      </div>
+      <div class="field-group">
+        <label>Solver time limit (s)</label>
+        <input type="number" id="opt-time" value="10" min="1" max="120">
+      </div>
+      <button class="btn primary" style="width:100%;margin-bottom:6px" onclick="runOptimize()">
+        ⚡ Run CVRP Optimizer
+      </button>
+      <button class="btn" style="width:100%" onclick="runRandomBenchmark()">
+        🎲 Random Benchmark
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Center panel -->
+<div class="panel-center">
+
+  <!-- Layer 1: Deck grid -->
+  <div class="layer-content active" id="layer1">
+    <div class="deck-header">
+      <h2>🗂 Deck Layout — Biomek i7 (9×5, 45 positions)</h2>
+      <div class="spacer"></div>
+      <span id="occupied-count" class="chip blue">0 / 45 occupied</span>
+      <button class="btn danger" onclick="clearDeck()">🗑 Clear</button>
+    </div>
+    <div class="deck-wrap">
+      <div class="deck-outer">
+        <!-- Column headers -->
+        <div style="display:flex;">
+          <div class="deck-ruler"></div>
+          <div class="deck-col-labels" id="col-labels"></div>
+        </div>
+        <div class="deck-h">
+          <div class="deck-row-labels" id="row-labels"></div>
+          <div class="deck-grid" id="deck-grid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layer 2: Protocol steps -->
+  <div class="layer-content" id="layer2">
+    <div class="proto-header">
+      <h2>📋 Protocol Sequence</h2>
+      <div class="spacer"></div>
+      <span id="step-count" class="chip blue">0 steps</span>
+      <span id="proto-time" class="chip amber">— s</span>
+      <span id="proto-travel" class="chip">— mm</span>
+    </div>
+    <div class="proto-body">
+      <div class="step-list" id="step-list">
+        <div style="color:var(--muted);text-align:center;padding:40px;font-size:12px;">
+          Build a protocol using the controls on the left, or load a preset from the top bar.
+        </div>
+      </div>
+      <div class="sim-panel" id="sim-panel">
+        <div class="section-title" style="margin-bottom:12px;"><span class="dot"></span>Simulation State</div>
+        <div class="sim-stat"><label>Total time</label><value id="sim-total-time">—</value></div>
+        <div class="sim-stat"><label>Arm travel</label><value id="sim-travel">—</value></div>
+        <div class="sim-stat"><label>Steps</label><value id="sim-steps">—</value></div>
+        <div class="sim-stat"><label>Errors</label><value id="sim-errors" style="color:var(--red)">—</value></div>
+        <div style="margin-top:12px;">
+          <div class="section-title" style="margin-bottom:8px;"><span class="dot"></span>Tip Status</div>
+          <div id="tip-legend" style="display:flex;gap:10px;margin-bottom:6px;flex-wrap:wrap;">
+            <span style="font-size:10px;"><span style="color:var(--green)">●</span> Clean</span>
+            <span style="font-size:10px;"><span style="color:var(--accent)">●</span> In Use</span>
+            <span style="font-size:10px;"><span style="color:var(--amber)">●</span> Dirty (parked)</span>
+            <span style="font-size:10px;"><span style="color:var(--border)">●</span> Empty</span>
+          </div>
+          <div id="tip-counts" style="font-size:11px;color:var(--muted);">—</div>
+        </div>
+        <div style="margin-top:12px;" id="arm-path-section">
+          <div class="section-title" style="margin-bottom:8px;"><span class="dot"></span>Arm Path</div>
+          <canvas id="arm-path-canvas" width="260" height="160"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layer 3: Optimizer results -->
+  <div class="layer-content" id="layer3">
+    <div class="opt-header">
+      <h2>⚡ CVRP Optimizer — Wu et al. 2025 + Spatial Extension</h2>
+      <div class="spacer"></div>
+      <span id="opt-job-count" class="chip blue">— jobs</span>
+      <span id="opt-cycle-count" class="chip amber">— cycles</span>
+    </div>
+    <div class="opt-body">
+      <div class="opt-col" id="results-col">
+        <div style="color:var(--muted);text-align:center;padding:40px;font-size:12px;">
+          Configure parameters on the left and click Run CVRP Optimizer.
+        </div>
+      </div>
+      <div class="opt-col" id="vis-col">
+        <div class="section-title" style="margin-bottom:10px;"><span class="dot"></span>Distance Matrix Heatmap</div>
+        <div class="heatmap-wrap">
+          <canvas id="heatmap-canvas" width="260" height="260"></canvas>
+        </div>
+        <div class="section-title" style="margin-top:14px;margin-bottom:8px;"><span class="dot"></span>Route Cycles (CVRP)</div>
+        <div id="route-vis"></div>
+        <div class="section-title" style="margin-top:14px;margin-bottom:8px;"><span class="dot"></span>Deck Travel (mm) by Method</div>
+        <div id="travel-bars"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Right panel -->
+<div class="panel panel-right" id="right-panel">
+  <div class="section">
+    <div class="section-title"><span class="dot"></span>Deck Coordinates</div>
+    <div id="coord-panel" style="color:var(--muted);font-size:11px;">
+      Hover a deck cell to see its physical coordinates.
+    </div>
+  </div>
+  <div class="section" id="dist-section">
+    <div class="section-title"><span class="dot"></span>Arm Travel Distances</div>
+    <div id="dist-panel" style="color:var(--muted);font-size:11px;">
+      Select two cells to compare travel distance.
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title"><span class="dot"></span>Layout Summary</div>
+    <div id="layout-summary"></div>
+  </div>
+  <div class="section" id="paper-ref">
+    <div class="section-title"><span class="dot"></span>Reference</div>
+    <div style="font-size:10px;color:var(--muted);line-height:1.6;">
+      Wu, Wang & Coley (2025)<br>
+      "Optimization of Robotic Liquid Handling as a CVRP"<br>
+      <em>Digital Discovery</em>, RSC<br>
+      DOI: 10.1039/D5DD00233H<br><br>
+      <strong style="color:var(--text)">Our extension:</strong><br>
+      D_extended[i,j] = α·D'_plate[i,j] + β·D_deck[i,j]<br>
+      β = 1/300 mm·s⁻¹ (arm speed)
+    </div>
+  </div>
+</div>
+</div><!-- .main -->
+</div><!-- .app -->
+
+<!-- Toast container -->
+<div class="toast-container" id="toasts"></div>
+
+<!-- Place modal -->
+<div class="modal-overlay" id="place-modal" style="display:none" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3>Place Labware at Position <span id="modal-pos"></span></h3>
+    <div class="field-group">
+      <label>Labware Type</label>
+      <select id="modal-lw-type" class="role-select">
+        <option value="">— Select —</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <label>Role</label>
+      <select id="modal-role" class="role-select">
+        <option value="generic">Generic</option>
+        <option value="source">Source Plate</option>
+        <option value="destination">Destination Plate</option>
+        <option value="tips_clean">Tips (Clean)</option>
+        <option value="tips_dirty">Tips (Dirty)</option>
+        <option value="waste">Waste</option>
+        <option value="reservoir">Reservoir</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <label>Custom Label (optional)</label>
+      <input type="text" id="modal-label" placeholder="e.g. Cell Plate A">
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="confirmPlace()">Place</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let deckData = null;
+let selectedPos = null;
+let distPos1 = null, distPos2 = null;
+let dragSourcePos = null;
+let currentLayer = 1;
+let labwareTypes = {};
+let protoStepLog = [];
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  await refreshDeck();
+  buildPalette();
+});
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchLayer(n) {
+  currentLayer = n;
+  document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', i===n-1));
+  document.querySelectorAll('.layer-content').forEach((c,i) => c.classList.toggle('active', i===n-1));
+  document.querySelectorAll('[id^="left-layer"]').forEach((d,i) => d.style.display = i===n-1?'':'none');
+}
+
+// ── API helpers ────────────────────────────────────────────────────────────
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  return r.json();
+}
+
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── Deck rendering ─────────────────────────────────────────────────────────
+async function refreshDeck() {
+  deckData = await api('/api/deck');
+  labwareTypes = deckData.labware_types;
+  renderDeck();
+  updateLayoutSummary();
+}
+
+function renderDeck() {
+  const grid = document.getElementById('deck-grid');
+  const colLabels = document.getElementById('col-labels');
+  const rowLabels = document.getElementById('row-labels');
+  grid.innerHTML = '';
+  colLabels.innerHTML = '';
+  rowLabels.innerHTML = '';
+
+  // Column headers
+  for (let c = 1; c <= 9; c++) {
+    const d = document.createElement('div');
+    d.className = 'deck-axis-label';
+    d.textContent = c;
+    colLabels.appendChild(d);
+  }
+  // Row headers
+  for (let r = 1; r <= 5; r++) {
+    const d = document.createElement('div');
+    d.className = 'deck-axis-label';
+    d.textContent = String.fromCharCode(64 + r);
+    rowLabels.appendChild(d);
+  }
+
+  let occupied = 0;
+  for (const cell of deckData.grid) {
+    const div = document.createElement('div');
+    div.className = 'deck-cell';
+    div.dataset.pos = cell.position;
+    div.dataset.x = cell.x_mm;
+    div.dataset.y = cell.y_mm;
+
+    const posNum = document.createElement('div');
+    posNum.className = 'pos-num';
+    posNum.textContent = cell.position;
+    div.appendChild(posNum);
+
+    if (cell.occupied) {
+      occupied++;
+      const lw = cell.labware;
+      const lwDef = labwareTypes[lw.labware_type] || {};
+      div.classList.add('occupied');
+      div.style.borderColor = lwDef.color || '#4f8ef7';
+      div.style.background = (lwDef.color || '#4f8ef7') + '18';
+
+      const icon = document.createElement('div');
+      icon.className = 'lw-icon';
+      icon.textContent = lwDef.icon || '📦';
+      div.appendChild(icon);
+
+      const label = document.createElement('div');
+      label.className = 'lw-label';
+      label.textContent = lw.label;
+      div.appendChild(label);
+
+      const role = document.createElement('div');
+      role.className = `lw-role role-${lw.role}`;
+      role.textContent = lw.role.replace('_',' ');
+      div.appendChild(role);
+
+      // Drag events for moving
+      div.draggable = true;
+      div.addEventListener('dragstart', e => {
+        dragSourcePos = cell.position;
+        div.classList.add('drag-source');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      div.addEventListener('dragend', () => div.classList.remove('drag-source'));
+
+      // Right-click to remove
+      div.addEventListener('contextmenu', async e => {
+        e.preventDefault();
+        await api('/api/deck/remove', 'POST', {deck_position: cell.position});
+        await refreshDeck();
+        toast(`Removed from position ${cell.position}`, 'info');
+      });
+
+    } else {
+      // Empty cell
+      const hint = document.createElement('div');
+      hint.textContent = `P${cell.position}`;
+      hint.style.cssText = 'font-size:8px;color:var(--border)';
+      div.appendChild(hint);
+
+      // Click empty → open place modal
+      div.addEventListener('click', () => openPlaceModal(cell.position));
+    }
+
+    // Drag-over for both occupied and empty
+    div.addEventListener('dragover', e => {
+      e.preventDefault();
+      div.classList.add('drag-over');
+    });
+    div.addEventListener('dragleave', () => div.classList.remove('drag-over'));
+    div.addEventListener('drop', async e => {
+      e.preventDefault();
+      div.classList.remove('drag-over');
+      if (dragSourcePos !== null && dragSourcePos !== cell.position) {
+        const res = await api('/api/deck/move', 'POST',
+          {from_pos: dragSourcePos, to_pos: cell.position});
+        if (res.error) toast(res.error, 'error');
+        else { await refreshDeck(); toast(`Moved to position ${cell.position}`, 'success'); }
+        dragSourcePos = null;
+      }
+    });
+
+    // Hover: show coordinates
+    div.addEventListener('mouseenter', () => {
+      document.getElementById('coord-panel').innerHTML = `
+        <div class="prop-row"><span class="pk">Position</span><span class="pv">${cell.position}</span></div>
+        <div class="prop-row"><span class="pk">Col / Row</span><span class="pv">${cell.col} / ${cell.row}</span></div>
+        <div class="prop-row"><span class="pk">X (mm)</span><span class="pv">${cell.x_mm}</span></div>
+        <div class="prop-row"><span class="pk">Y (mm)</span><span class="pv">${cell.y_mm}</span></div>
+        ${cell.occupied ? `<div class="prop-row"><span class="pk">Labware</span><span class="pv">${cell.labware.label}</span></div>
+        <div class="prop-row"><span class="pk">Role</span><span class="pv">${cell.labware.role}</span></div>` : ''}
+      `;
+      // Distance selection
+      if (distPos1 !== null && cell.position !== distPos1) {
+        const dx = (cell.x_mm - distPos1_xy[0]);
+        const dy = (cell.y_mm - distPos1_xy[1]);
+        const dist = Math.sqrt(dx*dx + dy*dy).toFixed(1);
+        document.getElementById('dist-panel').innerHTML = `
+          <div class="prop-row"><span class="pk">From</span><span class="pv">P${distPos1}</span></div>
+          <div class="prop-row"><span class="pk">To</span><span class="pv">P${cell.position}</span></div>
+          <div class="prop-row"><span class="pk">Distance</span><span class="pv">${dist} mm</span></div>
+          <div class="prop-row"><span class="pk">Travel time</span><span class="pv">${(dist/300).toFixed(3)} s</span></div>
+        `;
+      }
+    });
+
+    // Click: distance selection (layer 1 only)
+    div.addEventListener('click', (e) => {
+      if (cell.occupied && currentLayer === 1) {
+        // second click: measure distance
+        if (distPos1 === null) {
+          distPos1 = cell.position;
+          distPos1_xy = [cell.x_mm, cell.y_mm];
+          document.getElementById('dist-panel').innerHTML =
+            `<div style="color:var(--accent);font-size:11px;">P${cell.position} selected — hover another to measure distance.</div>`;
+        } else {
+          distPos1 = null;
+          distPos1_xy = null;
+          document.getElementById('dist-panel').innerHTML = 'Select two cells to compare travel distance.';
+        }
+      }
+    });
+
+    grid.appendChild(div);
+  }
+
+  document.getElementById('occupied-count').textContent = `${occupied} / 45 occupied`;
+}
+let distPos1_xy = null;
+
+function updateLayoutSummary() {
+  if (!deckData) return;
+  const roles = {};
+  for (const cell of deckData.grid) {
+    if (cell.occupied) {
+      const r = cell.labware.role;
+      roles[r] = (roles[r] || 0) + 1;
+    }
+  }
+  const el = document.getElementById('layout-summary');
+  if (Object.keys(roles).length === 0) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:11px;">Empty deck</div>';
+    return;
+  }
+  el.innerHTML = Object.entries(roles).map(([r,n]) =>
+    `<div class="prop-row"><span class="pk">${r.replace('_',' ')}</span>
+     <span class="pv lw-role role-${r}" style="display:inline">${n}</span></div>`
+  ).join('');
+}
+
+// ── Palette ────────────────────────────────────────────────────────────────
+function buildPalette() {
+  const container = document.getElementById('palette');
+  const select = document.getElementById('modal-lw-type');
+  const types = {
+    "96well_plate":   {label:"96-Well Plate",   icon:"🧫"},
+    "384well_plate":  {label:"384-Well Plate",   icon:"🧫"},
+    "tiprack_50ul":   {label:"Tip Rack 50µL",    icon:"🔩"},
+    "tiprack_200ul":  {label:"Tip Rack 200µL",   icon:"🔩"},
+    "tiprack_1000ul": {label:"Tip Rack 1000µL",  icon:"🔩"},
+    "reservoir_12":   {label:"12-Col Reservoir", icon:"🧪"},
+    "reservoir_1":    {label:"Single Reservoir", icon:"🧪"},
+    "waste_trough":   {label:"Waste Trough",     icon:"🗑️"},
+    "tube_rack_15ml": {label:"Tube Rack 15mL",   icon:"🧬"},
+    "tube_rack_50ml": {label:"Tube Rack 50mL",   icon:"🧬"},
+  };
+  for (const [key, lw] of Object.entries(types)) {
+    const div = document.createElement('div');
+    div.className = 'lw-item';
+    div.draggable = true;
+    div.innerHTML = `<div class="icon">${lw.icon}</div>
+      <div class="info"><div class="name">${lw.label}</div>
+      <div class="type-key">${key}</div></div>`;
+    div.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('labware_type', key);
+      dragSourcePos = null;
+    });
+    div.addEventListener('click', () => {
+      document.getElementById('modal-lw-type').value = key;
+    });
+    container.appendChild(div);
+
+    const opt = document.createElement('option');
+    opt.value = key; opt.textContent = lw.label;
+    select.appendChild(opt);
+  }
+  // Handle palette drop onto deck cells
+  document.getElementById('deck-grid').addEventListener('drop', async e => {
+    const lwType = e.dataTransfer.getData('labware_type');
+    if (!lwType) return;
+    const target = e.target.closest('.deck-cell');
+    if (!target) return;
+    const pos = parseInt(target.dataset.pos);
+    const role = document.getElementById('current-role').value;
+    const id = `${lwType}_${pos}`;
+    const res = await api('/api/deck/place', 'POST', {
+      labware_id: id, labware_type: lwType, deck_position: pos, role
+    });
+    if (res.error) toast(res.error, 'error');
+    else { await refreshDeck(); toast(`Placed ${lwType} at position ${pos}`, 'success'); }
+  });
+}
+
+// ── Place modal ────────────────────────────────────────────────────────────
+let modalPos = null;
+function openPlaceModal(pos) {
+  modalPos = pos;
+  document.getElementById('modal-pos').textContent = pos;
+  document.getElementById('modal-label').value = '';
+  document.getElementById('place-modal').style.display = 'flex';
+}
+function closeModal(e) {
+  if (!e || e.target === document.getElementById('place-modal'))
+    document.getElementById('place-modal').style.display = 'none';
+}
+async function confirmPlace() {
+  const lwType = document.getElementById('modal-lw-type').value;
+  if (!lwType) { toast('Select a labware type', 'error'); return; }
+  const role = document.getElementById('modal-role').value;
+  const label = document.getElementById('modal-label').value;
+  const id = `${lwType}_${modalPos}`;
+  const res = await api('/api/deck/place', 'POST', {
+    labware_id: id, labware_type: lwType, deck_position: modalPos, role, label
+  });
+  document.getElementById('place-modal').style.display = 'none';
+  if (res.error) toast(res.error, 'error');
+  else { await refreshDeck(); toast(`Placed at position ${modalPos}`, 'success'); }
+}
+
+// ── Preset loader ──────────────────────────────────────────────────────────
+async function loadPreset(name) {
+  const res = await api(`/api/deck/presets/${name}`, 'POST');
+  if (res.error) { toast(res.error, 'error'); return; }
+  await refreshDeck();
+  toast(`Loaded preset: ${name}`, 'success');
+}
+
+async function clearDeck() {
+  await api('/api/deck/clear', 'POST');
+  await refreshDeck();
+  toast('Deck cleared', 'info');
+}
+
+// ── Layer 2: Protocol ──────────────────────────────────────────────────────
+async function buildMediaChange() {
+  const nWells = parseInt(document.getElementById('proto-n-wells').value);
+  const aspVol = parseFloat(document.getElementById('proto-asp-vol').value);
+  const dispVol = parseFloat(document.getElementById('proto-disp-vol').value);
+
+  const res = await api('/api/protocol/media_change', 'POST', {
+    n_wells: nWells, aspirate_vol: aspVol, dispense_vol: dispVol
+  });
+  if (res.errors) {
+    toast(res.errors.join(' | '), 'error');
+    return;
+  }
+  renderProtocol(res.protocol, res.simulation);
+  switchLayer(2);
+  toast(`Protocol built: ${res.protocol.n_steps} steps`, 'success');
+}
+
+function renderProtocol(proto, sim) {
+  protoStepLog = sim.step_log;
+  const list = document.getElementById('step-list');
+  list.innerHTML = '';
+
+  for (const step of proto.steps) {
+    const log = protoStepLog.find(l => l.step_id === step.step_id) || {};
+    const card = document.createElement('div');
+    card.className = 'step-card';
+    card.innerHTML = `
+      <div class="step-num">${step.step_id}</div>
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+          <span class="step-type-badge st-${step.step_type}">${step.step_type.replace('_',' ')}</span>
+          ${log.errors && log.errors.length ? `<span class="step-err">⚠ ${log.errors[0]}</span>` : ''}
+        </div>
+        <div class="step-desc">${step.description}</div>
+        <div style="display:flex;gap:10px;margin-top:4px;">
+          <span class="step-time">⏱ ${(log.step_time_s||0).toFixed(2)}s (cum: ${(log.cumulative_time_s||0).toFixed(1)}s)</span>
+          ${log.arm_travel_mm > 0 ? `<span class="step-travel">✈ ${log.arm_travel_mm.toFixed(0)}mm</span>` : ''}
+          ${step.deck_position ? `<span style="font-size:10px;color:var(--muted)">→ P${step.deck_position}</span>` : ''}
+        </div>
+      </div>
+    `;
+    list.appendChild(card);
+  }
+
+  // Update summary chips
+  document.getElementById('step-count').textContent = `${proto.n_steps} steps`;
+  document.getElementById('proto-time').textContent = `${sim.total_time_s.toFixed(1)} s`;
+  document.getElementById('proto-travel').textContent = `${sim.total_travel_mm.toFixed(0)} mm`;
+
+  // Update sim panel
+  const fs = sim.final_state;
+  document.getElementById('sim-total-time').textContent = `${sim.total_time_s.toFixed(2)} s`;
+  document.getElementById('sim-travel').textContent = `${sim.total_travel_mm.toFixed(0)} mm`;
+  document.getElementById('sim-steps').textContent = proto.n_steps;
+  const errs = fs.errors.length;
+  document.getElementById('sim-errors').textContent = errs ? `${errs} error(s)` : 'None';
+  document.getElementById('sim-errors').style.color = errs ? 'var(--red)' : 'var(--green)';
+
+  // Tip counts
+  const tc = protoStepLog.length > 0 ? protoStepLog[protoStepLog.length-1].tip_counts : {};
+  document.getElementById('tip-counts').innerHTML = Object.entries(tc).map(([k,v]) =>
+    `<span class="chip">${k}: <strong>${v}</strong></span> `
+  ).join('');
+
+  // Draw arm path
+  drawArmPath(protoStepLog);
+}
+
+function drawArmPath(stepLog) {
+  const canvas = document.getElementById('arm-path-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Map deck positions to canvas coords
+  // Deck is 9 cols × 5 rows; canvas 260×160
+  const margin = 14;
+  function posToXY(pos) {
+    const col = ((pos-1) % 9) + 1;
+    const row = Math.floor((pos-1) / 9) + 1;
+    const x = margin + (col-1) / 8 * (W - 2*margin);
+    const y = margin + (row-1) / 4 * (H - 2*margin);
+    return [x, y];
+  }
+
+  // Draw grid dots
+  ctx.fillStyle = '#2e3352';
+  for (let p = 1; p <= 45; p++) {
+    const [x,y] = posToXY(p);
+    ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Draw arm path
+  const positions = stepLog.filter(s => s.arm_position).map(s => s.arm_position);
+  if (positions.length < 2) return;
+
+  ctx.strokeStyle = '#4f8ef7';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([3, 2]);
+  ctx.beginPath();
+  let [x,y] = posToXY(positions[0]);
+  ctx.moveTo(x, y);
+  for (let i = 1; i < positions.length; i++) {
+    [x,y] = posToXY(positions[i]);
+    ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Draw visited positions as dots
+  const visited = new Set(positions);
+  for (const p of visited) {
+    const [px,py] = posToXY(p);
+    ctx.fillStyle = '#4f8ef7';
+    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Start/end markers
+  const [sx,sy] = posToXY(positions[0]);
+  ctx.fillStyle = '#22c55e';
+  ctx.beginPath(); ctx.arc(sx, sy, 5, 0, Math.PI*2); ctx.fill();
+  const [ex,ey] = posToXY(positions[positions.length-1]);
+  ctx.fillStyle = '#ef4444';
+  ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI*2); ctx.fill();
+}
+
+// ── Layer 3: Optimizer ─────────────────────────────────────────────────────
+async function runOptimize() {
+  // Use actual task matrix from protocol if available, else generate
+  await _doOptimize({
+    n_src: parseInt(document.getElementById('opt-n-src').value),
+    n_dst: parseInt(document.getElementById('opt-n-dst').value),
+    density: parseFloat(document.getElementById('opt-density').value),
+    volume_ul: parseFloat(document.getElementById('opt-vol').value),
+    alpha: parseFloat(document.getElementById('opt-alpha').value),
+    beta: parseFloat(document.getElementById('opt-beta').value),
+    time_limit_s: parseInt(document.getElementById('opt-time').value),
+    seed: Math.floor(Math.random() * 10000),
+  });
+}
+
+async function runRandomBenchmark() {
+  const seeds = [42, 123, 999, 7, 2025];
+  toast('Running 5-seed benchmark...', 'info');
+  for (const seed of seeds) {
+    await _doOptimize({
+      n_src: 96, n_dst: 96, density: 0.3, volume_ul: 100,
+      alpha: 1.0, beta: 0.00333, time_limit_s: 8, seed
+    });
+    await new Promise(r => setTimeout(r, 200));
+  }
+}
+
+async function _doOptimize(params) {
+  const res = await api('/api/optimize/random', 'POST', params);
+  if (res.error) { toast(res.error, 'error'); return; }
+  renderOptResults(res);
+  switchLayer(3);
+}
+
+function renderOptResults(res) {
+  const methods = res.methods || {};
+  const cvrp = methods.cvrp_or_tools || {};
+  const rowMajor = methods.row_major || {};
+  const greedy = methods.greedy || {};
+  const lap = methods.lap || {};
+
+  document.getElementById('opt-job-count').textContent = `${res.n_jobs} jobs`;
+  document.getElementById('opt-cycle-count').textContent = `${cvrp.n_cycles || '—'} cycles`;
+
+  const col = document.getElementById('results-col');
+  const maxCost = Math.max(cvrp.total_cost||0, rowMajor.total_cost||0, greedy.total_cost||0, lap.total_cost||0) || 1;
+  const maxMM = Math.max(cvrp.total_travel_mm||0, rowMajor.total_travel_mm||0, greedy.total_travel_mm||0, lap.total_travel_mm||0) || 1;
+
+  const improvements = res.improvements || {};
+  const savings = res.deck_travel_savings_mm || {};
+
+  col.innerHTML = `
+    <div style="margin-bottom:12px;">
+      <div class="section-title" style="margin-bottom:8px;"><span class="dot"></span>Cost Weights</div>
+      <div class="prop-row"><span class="pk">α (plate adj.)</span><span class="pv">${res.alpha}</span></div>
+      <div class="prop-row"><span class="pk">β (deck travel)</span><span class="pv">${res.beta.toFixed(5)}</span></div>
+      <div class="prop-row"><span class="pk">Jobs</span><span class="pv">${res.n_jobs}</span></div>
+    </div>
+
+    ${renderMethodCard('CVRP (OR-Tools)', 'cvrp', cvrp, maxCost, maxMM, true)}
+    ${renderMethodCard('Row-Major Baseline', 'row_major', rowMajor, maxCost, maxMM, false)}
+    ${renderMethodCard('Greedy Nearest', 'greedy', greedy, maxCost, maxMM, false)}
+    ${renderMethodCard('Long-Axis Priority (LAP)', 'lap', lap, maxCost, maxMM, false)}
+
+    <div style="margin-top:12px;background:var(--surface2);border-radius:8px;padding:12px;border:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--green);">✅ CVRP Improvements</div>
+      <div class="metric-row">
+        <span class="label">vs Row-Major</span>
+        <span class="val" style="color:var(--green)">${improvements['vs_row_major_%'] !== null ? improvements['vs_row_major_%']+'%' : '—'}</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">vs Greedy</span>
+        <span class="val" style="color:var(--green)">${improvements['vs_greedy_%'] !== null ? improvements['vs_greedy_%']+'%' : '—'}</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">vs LAP</span>
+        <span class="val" style="color:var(--green)">${improvements['vs_lap_%'] !== null ? improvements['vs_lap_%']+'%' : '—'}</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Deck travel saved vs Row-Major</span>
+        <span class="val" style="color:var(--amber)">${savings['vs_row_major'] !== undefined ? savings['vs_row_major'].toFixed(0)+' mm' : '—'}</span>
+      </div>
+    </div>
+  `;
+
+  // Route visualization
+  renderRoutes(cvrp.routes || []);
+
+  // Heatmap
+  if (res.distance_matrix) drawHeatmap(res.distance_matrix);
+
+  // Travel bars
+  renderTravelBars({cvrp, row_major: rowMajor, greedy, lap}, maxMM);
+}
+
+function renderMethodCard(name, key, data, maxCost, maxMM, isWinner) {
+  const pct = maxCost > 0 ? (data.total_cost / maxCost * 100) : 0;
+  return `
+    <div class="method-card ${isWinner ? 'winner' : ''}">
+      <div class="method-name">
+        ${name}
+        ${isWinner ? '<span class="winner-badge">⚡ CVRP</span>' : ''}
+      </div>
+      <div class="metric-row"><span class="label">Total cost</span>
+        <span class="val">${(data.total_cost||0).toFixed(3)}</span></div>
+      <div class="metric-row"><span class="label">Deck travel</span>
+        <span class="val">${(data.total_travel_mm||0).toFixed(0)} mm</span></div>
+      <div class="metric-row"><span class="label">Cycles</span>
+        <span class="val">${data.n_cycles || '—'}</span></div>
+      <div class="metric-row"><span class="label">Solve time</span>
+        <span class="val">${(data.solve_time_s||0).toFixed(2)} s</span></div>
+      <div class="improvement-bar" style="margin-top:6px;">
+        <div class="bar-label">Relative cost (lower=better)</div>
+        <div class="bar-track">
+          <div class="bar-fill bar-${key}" style="width:${pct.toFixed(1)}%"></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderRoutes(routes) {
+  const el = document.getElementById('route-vis');
+  if (!routes || routes.length === 0) { el.innerHTML = '<div style="color:var(--muted);font-size:11px;">No routes</div>'; return; }
+  const colors = ['#4f8ef7','#7c5cbf','#22c55e','#f59e0b','#ef4444','#2dd4bf','#a78bfa','#fb7185'];
+  el.innerHTML = routes.slice(0, 16).map((route, i) => `
+    <div class="route-row">
+      <span class="route-label">C${i+1}</span>
+      ${route.map(ji => `<span class="job-chip" style="border-color:${colors[i%8]}">J${ji+1}</span>`).join('')}
+    </div>
+  `).join('') + (routes.length > 16 ? `<div style="color:var(--muted);font-size:10px;">...and ${routes.length-16} more cycles</div>` : '');
+}
+
+function renderTravelBars(methods, maxMM) {
+  const el = document.getElementById('travel-bars');
+  const labels = {cvrp:'CVRP', row_major:'Row-Major', greedy:'Greedy', lap:'LAP'};
+  const colors = {cvrp:'var(--green)', row_major:'var(--red)', greedy:'var(--amber)', lap:'var(--accent)'};
+  el.innerHTML = Object.entries(labels).map(([k,label]) => {
+    const mm = methods[k]?.total_travel_mm || 0;
+    const pct = maxMM > 0 ? (mm/maxMM*100) : 0;
+    return `
+      <div style="margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:3px;">
+          <span style="color:${colors[k]}">${label}</span>
+          <span style="font-family:var(--mono)">${mm.toFixed(0)} mm</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%;background:${colors[k]}"></div></div>
+      </div>`;
+  }).join('');
+}
+
+function drawHeatmap(dmData) {
+  const canvas = document.getElementById('heatmap-canvas');
+  const ctx = canvas.getContext('2d');
+  const data = dmData.data;
+  const n = dmData.n;
+  if (n > 100) { canvas.width = 260; canvas.height = 260; }
+
+  const W = canvas.width, H = canvas.height;
+  const cellW = W / n, cellH = H / n;
+
+  let maxVal = 0;
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++)
+      if (data[i][j] > maxVal) maxVal = data[i][j];
+
+  ctx.clearRect(0, 0, W, H);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const v = maxVal > 0 ? data[i][j] / maxVal : 0;
+      // Color: 0=dark blue, 1=yellow-white
+      const r = Math.round(v * 255);
+      const g = Math.round(v * 200);
+      const b = Math.round((1-v) * 180 + 40);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(j * cellW, i * cellH, Math.max(cellW, 1), Math.max(cellH, 1));
+    }
+  }
+  // Labels
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(0, H-14, W, 14);
+  ctx.fillStyle = 'white';
+  ctx.font = '9px monospace';
+  ctx.fillText(`${n}×${n} distance matrix  max=${maxVal.toFixed(2)}`, 4, H-3);
+}
+</script>
+</body>
+</html>
