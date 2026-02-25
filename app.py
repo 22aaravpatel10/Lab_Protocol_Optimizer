@@ -164,11 +164,12 @@ def build_media_change():
     n_wells = int(d.get("n_wells", 96))
     asp_vol = float(d.get("aspirate_vol", 200))
     disp_vol = float(d.get("dispense_vol", 200))
+    n_channels = int(d.get("n_channels", 8))
 
-    # Build well groups of up to 8 (one pipette stroke)
+    # Build well groups sized to the pipette head capacity
     well_groups = [
-        list(range(i, min(i + PIPETTE_CAPACITY, n_wells)))
-        for i in range(0, n_wells, PIPETTE_CAPACITY)
+        list(range(i, min(i + n_channels, n_wells)))
+        for i in range(0, n_wells, n_channels)
     ]
 
     _protocol = build_media_change_protocol(
@@ -182,6 +183,7 @@ def build_media_change():
         well_groups=well_groups,
         aspirate_vol=asp_vol,
         dispense_vol=disp_vol,
+        n_channels=n_channels,
     )
 
     state, step_log = _protocol.simulate()
@@ -286,6 +288,7 @@ def optimize():
     alpha = float(d.get("alpha", 1.0))
     beta  = float(d.get("beta", 1.0 / 300.0))
     time_limit = int(d.get("time_limit_s", 10))
+    n_channels = int(d.get("n_channels", 8))
 
     jobs = task_matrix_to_jobs(
         T, src_id, dst_id, src_pos, dst_pos,
@@ -295,7 +298,8 @@ def optimize():
     if not jobs:
         return jsonify({"error": "Task matrix has no non-zero entries"}), 400
 
-    report = run_optimization(jobs, alpha=alpha, beta=beta, time_limit_s=time_limit)
+    report = run_optimization(jobs, alpha=alpha, beta=beta, time_limit_s=time_limit,
+                               n_channels=n_channels)
     summary = report.summary()
 
     # Include job list for visualization
@@ -341,10 +345,12 @@ def optimize_random():
     alpha = float(d.get("alpha", 1.0))
     beta  = float(d.get("beta", 1.0 / 300.0))
     time_limit = int(d.get("time_limit_s", 10))
+    n_channels = int(d.get("n_channels", 8))
 
     jobs = task_matrix_to_jobs(T, "source", "destination", src_pos, dst_pos,
                                 src_cols=src_cols, dst_cols=dst_cols)
-    report = run_optimization(jobs, alpha=alpha, beta=beta, time_limit_s=time_limit)
+    report = run_optimization(jobs, alpha=alpha, beta=beta, time_limit_s=time_limit,
+                               n_channels=n_channels)
     summary = report.summary()
     summary["jobs"] = [j.to_dict() for j in jobs]
     summary["task_matrix"] = T.tolist()

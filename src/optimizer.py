@@ -59,7 +59,17 @@ ALPHA = 1.0          # weight for plate-level well adjacency cost (dimensionless
 BETA  = 1.0 / 300.0  # weight for deck travel (mm→s at 300 mm/s arm speed)
 SCALE = 1000         # OR-Tools needs integer costs; multiply floats by SCALE
 
-PIPETTE_CAPACITY = 8  # 8-channel head
+PIPETTE_CAPACITY = 8  # default — overridden at call time by n_channels param
+
+# Supported head configurations and their well-column span
+# 8-channel  → spans 8 rows (A–H), 1 column at a time
+# 96-channel → spans entire 96-well plate in one shot (8 rows × 12 cols)
+# 384-channel→ spans entire 384-well plate in one shot (16 rows × 24 cols)
+HEAD_CONFIGS = {
+    8:   {"label": "8-Channel",   "rows": 8,  "cols": 1},
+    96:  {"label": "96-Channel",  "rows": 8,  "cols": 12},
+    384: {"label": "384-Channel", "rows": 16, "cols": 24},
+}
 
 
 # ── Job definition ────────────────────────────────────────────────────────────
@@ -148,7 +158,8 @@ def _well_distance_1d(r_a: int, c_a: int, r_b: int, c_b: int,
 
 def build_distance_matrix(jobs: List[Job],
                             alpha: float = ALPHA,
-                            beta: float = BETA) -> np.ndarray:
+                            beta: float = BETA,
+                            n_channels: int = PIPETTE_CAPACITY) -> np.ndarray:
     """
     Build the extended distance matrix D_extended for OR-Tools.
 
@@ -158,8 +169,10 @@ def build_distance_matrix(jobs: List[Job],
     D'_plate[i,j] = src_well_cost(i→j) + dst_well_cost(i→j)  [paper's Eq.2-4]
     D_deck[i,j]   = arm travel mm between last deck pos of job i and first of job j
 
-    For multi-plate protocols: the arm goes src→dst for each job.
-    Between jobs, the arm travels from dst_pos of job i to src_pos of job j.
+    n_channels controls the adjacency window:
+      8-channel  → wells in same column within 8 rows = cost 0
+      96-channel → all wells on same plate = cost 0 (whole plate in one stroke)
+      384-channel→ all wells on same 384 plate = cost 0
     """
     N = len(jobs)
     D = np.zeros((N + 1, N + 1), dtype=float)
@@ -173,9 +186,9 @@ def build_distance_matrix(jobs: List[Job],
 
             # Paper's plate-level cost: well adjacency on source + destination plates
             src_cost = _well_distance_1d(ji.src_row, ji.src_col,
-                                          jj.src_row, jj.src_col)
+                                          jj.src_row, jj.src_col, n_channels)
             dst_cost = _well_distance_1d(ji.dst_row, ji.dst_col,
-                                          jj.dst_row, jj.dst_col)
+                                          jj.dst_row, jj.dst_col, n_channels)
             plate_cost = src_cost + dst_cost
 
             # Spatial deck cost: arm travels from dst of job i → src of job j
@@ -229,7 +242,8 @@ def solve_cvrp(jobs: List[Job],
                capacity: int = PIPETTE_CAPACITY,
                time_limit_s: int = 10,
                alpha: float = ALPHA,
-               beta: float = BETA) -> OptimizationResult:
+               beta: float = BETA,
+               n_channels: int = PIPETTE_CAPACITY) -> OptimizationResult:
     """
     Solve the CVRP using Google OR-Tools.
     Returns optimized routes (cycles) over the job list.
@@ -356,17 +370,19 @@ def solve_cvrp(jobs: List[Job],
 
 def _row_major_baseline(jobs: List[Job],
                          D: np.ndarray,
-                         solve_time: float) -> OptimizationResult:
+                         solve_time: float,
+                         n_channels: int = PIPETTE_CAPACITY) -> OptimizationResult:
     """Row-major sorting baseline: execute jobs in task matrix order."""
     N = len(jobs)
     order = list(range(N))
-    routes = [order[i:i+PIPETTE_CAPACITY] for i in range(0, N, PIPETTE_CAPACITY)]
+    routes = [order[i:i+n_channels] for i in range(0, N, n_channels)]
     cost = _route_cost(routes, D)
     mm = _compute_deck_travel(order, jobs)
     return OptimizationResult("row_major", routes, cost, mm, len(routes), solve_time, order)
 
 
-def _greedy_baseline(jobs: List[Job], D: np.ndarray) -> OptimizationResult:
+def _greedy_baseline(jobs: List[Job], D: np.ndarray,
+                      n_channels: int = PIPETTE_CAPACITY) -> OptimizationResult:
     """Greedy nearest-neighbour baseline."""
     t0 = time.time()
     N = len(jobs)
@@ -387,7 +403,7 @@ def _greedy_baseline(jobs: List[Job], D: np.ndarray) -> OptimizationResult:
         order.append(best)
         unvisited.remove(best)
         current = best + 1
-        if len(current_route) >= PIPETTE_CAPACITY:
+        if len(current_route) >= n_channels:
             routes.append(current_route)
             current_route = []
             current = 0  # return to depot
@@ -401,14 +417,14 @@ def _greedy_baseline(jobs: List[Job], D: np.ndarray) -> OptimizationResult:
                                time.time() - t0, order)
 
 
-def _lap_baseline(jobs: List[Job], D: np.ndarray) -> OptimizationResult:
+def _lap_baseline(jobs: List[Job], D: np.ndarray,
+                   n_channels: int = PIPETTE_CAPACITY) -> OptimizationResult:
     """
     Long-Axis Prioritized (LAP) baseline from the paper.
     Prioritizes same-column jobs to maximize parallelization.
     """
     t0 = time.time()
     N = len(jobs)
-    # Group by source column (long axis for 96-well = 12 cols)
     from collections import defaultdict
     col_groups: Dict[int, List[int]] = defaultdict(list)
     for i, job in enumerate(jobs):
@@ -422,7 +438,7 @@ def _lap_baseline(jobs: List[Job], D: np.ndarray) -> OptimizationResult:
         for ji in col_groups[col]:
             current_route.append(ji)
             order.append(ji)
-            if len(current_route) >= PIPETTE_CAPACITY:
+            if len(current_route) >= n_channels:
                 routes.append(current_route)
                 current_route = []
 
@@ -469,12 +485,14 @@ class OptimizationReport:
     lap: OptimizationResult
     alpha: float
     beta: float
+    n_channels: int = PIPETTE_CAPACITY
 
     def summary(self) -> dict:
         return {
             "n_jobs": len(self.jobs),
             "alpha": self.alpha,
             "beta": self.beta,
+            "n_channels": self.n_channels,
             "methods": {
                 "cvrp_or_tools": self.cvrp.to_dict(),
                 "row_major": self.row_major.to_dict(),
@@ -504,14 +522,16 @@ class OptimizationReport:
 def run_optimization(jobs: List[Job],
                      alpha: float = ALPHA,
                      beta: float = BETA,
-                     time_limit_s: int = 10) -> OptimizationReport:
+                     time_limit_s: int = 10,
+                     n_channels: int = PIPETTE_CAPACITY) -> OptimizationReport:
     """Run the full optimization and all baselines. Return a comparison report."""
-    D = build_distance_matrix(jobs, alpha=alpha, beta=beta)
+    D = build_distance_matrix(jobs, alpha=alpha, beta=beta, n_channels=n_channels)
 
-    cvrp_result    = solve_cvrp(jobs, D, time_limit_s=time_limit_s, alpha=alpha, beta=beta)
-    row_major      = _row_major_baseline(jobs, D, 0.0)
-    greedy         = _greedy_baseline(jobs, D)
-    lap            = _lap_baseline(jobs, D)
+    cvrp_result    = solve_cvrp(jobs, D, capacity=n_channels, time_limit_s=time_limit_s,
+                                 alpha=alpha, beta=beta, n_channels=n_channels)
+    row_major      = _row_major_baseline(jobs, D, 0.0, n_channels=n_channels)
+    greedy         = _greedy_baseline(jobs, D, n_channels=n_channels)
+    lap            = _lap_baseline(jobs, D, n_channels=n_channels)
 
     return OptimizationReport(
         jobs=jobs,
@@ -521,5 +541,6 @@ def run_optimization(jobs: List[Job],
         greedy=greedy,
         lap=lap,
         alpha=alpha,
+        n_channels=n_channels,
         beta=beta,
     )

@@ -424,10 +424,11 @@ def build_media_change_protocol(deck: DeckLayout,
                                  reservoir_id: str,
                                  well_groups: List[List[int]],
                                  aspirate_vol: float = 200.0,
-                                 dispense_vol: float = 200.0) -> Protocol:
+                                 dispense_vol: float = 200.0,
+                                 n_channels: int = 8) -> Protocol:
     """
     Build the canonical media-change protocol:
-      For each well group (up to 8 wells):
+      For each well group (up to n_channels wells):
         1. Pick dirty tips
         2. Aspirate old media from wells
         3. Move to waste, discard liquid (tip still on)
@@ -436,6 +437,11 @@ def build_media_change_protocol(deck: DeckLayout,
         6. Aspirate fresh media from reservoir
         7. Dispense to wells
         8. Park clean tips
+
+    n_channels controls how many wells are processed per stroke:
+      8   → standard 8-channel head (1 column at a time)
+      96  → 96-channel head (entire 96-well plate in one stroke)
+      384 → 384-channel head (entire 384-well plate in one stroke)
     """
     proto = Protocol("Media Change", deck)
 

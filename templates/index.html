@@ -247,6 +247,21 @@ canvas { display: block; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+/* Head selector cards */
+.head-option { display: block; cursor: pointer; }
+.head-option input[type="radio"] { display: none; }
+.head-card { display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+  border: 1.5px solid var(--border); border-radius: 7px; background: var(--surface2);
+  transition: all .15s; }
+.head-option input:checked + .head-card { border-color: var(--accent);
+  background: rgba(79,142,247,.1); }
+.head-card:hover { border-color: var(--accent); }
+.head-icon { font-size: 16px; }
+.head-info { flex: 1; display: flex; flex-direction: column; }
+.head-name { font-size: 11px; font-weight: 700; color: var(--text); }
+.head-desc { font-size: 9px; color: var(--muted); }
+.head-cap { font-size: 9px; font-family: var(--mono); color: var(--accent);
+  font-weight: 700; white-space: nowrap; }
 /* Info chips */
 .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10px;
   padding: 2px 8px; border-radius: 10px; background: var(--surface2);
@@ -314,6 +329,14 @@ canvas { display: block; }
     <div class="section">
       <div class="section-title"><span class="dot"></span>Protocol Template</div>
       <div class="field-group">
+        <label>Pipette Head</label>
+        <select id="proto-n-channels" class="role-select" onchange="updateProtoWellOptions()">
+          <option value="8" selected>8-Channel (standard)</option>
+          <option value="96">96-Channel (full plate)</option>
+          <option value="384">384-Channel (full 384-plate)</option>
+        </select>
+      </div>
+      <div class="field-group">
         <label>Wells to process</label>
         <select id="proto-n-wells" class="role-select">
           <option value="8">8 wells (1 column)</option>
@@ -329,6 +352,9 @@ canvas { display: block; }
       <div class="field-group">
         <label>Dispense volume (µL)</label>
         <input type="number" id="proto-disp-vol" value="200" min="1" max="1000">
+      </div>
+      <div id="head-note" style="font-size:10px;color:var(--muted);margin-bottom:8px;padding:6px 8px;background:var(--surface2);border-radius:5px;border-left:2px solid var(--accent);">
+        8-channel: processes 8 wells per stroke across columns.
       </div>
       <button class="btn primary" style="width:100%" onclick="buildMediaChange()">▶ Build & Simulate</button>
     </div>
@@ -348,6 +374,47 @@ canvas { display: block; }
 
   <!-- Layer 3 left: Optimizer controls -->
   <div id="left-layer3" style="display:none;">
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>Pipette Head</div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <label class="head-option" id="head-8">
+          <input type="radio" name="opt-n-channels" value="8" checked onchange="updateHeadUI()">
+          <span class="head-card">
+            <span class="head-icon">🔩</span>
+            <span class="head-info">
+              <span class="head-name">8-Channel</span>
+              <span class="head-desc">Standard — 1 column/stroke</span>
+            </span>
+            <span class="head-cap">cap: 8</span>
+          </span>
+        </label>
+        <label class="head-option" id="head-96">
+          <input type="radio" name="opt-n-channels" value="96" onchange="updateHeadUI()">
+          <span class="head-card">
+            <span class="head-icon">🔬</span>
+            <span class="head-info">
+              <span class="head-name">96-Channel</span>
+              <span class="head-desc">Full plate in 1 stroke</span>
+            </span>
+            <span class="head-cap">cap: 96</span>
+          </span>
+        </label>
+        <label class="head-option" id="head-384">
+          <input type="radio" name="opt-n-channels" value="384" onchange="updateHeadUI()">
+          <span class="head-card">
+            <span class="head-icon">🧬</span>
+            <span class="head-info">
+              <span class="head-name">384-Channel</span>
+              <span class="head-desc">Full 384-plate in 1 stroke</span>
+            </span>
+            <span class="head-cap">cap: 384</span>
+          </span>
+        </label>
+      </div>
+      <div id="head-impact" style="font-size:10px;color:var(--muted);margin-top:8px;padding:6px 8px;background:var(--surface2);border-radius:5px;border-left:2px solid var(--accent);">
+        Larger heads → fewer cycles, more parallelism, lower CVRP cost.
+      </div>
+    </div>
     <div class="section">
       <div class="section-title"><span class="dot"></span>Task Matrix</div>
       <div class="field-group">
@@ -473,6 +540,7 @@ canvas { display: block; }
       <div class="spacer"></div>
       <span id="opt-job-count" class="chip blue">— jobs</span>
       <span id="opt-cycle-count" class="chip amber">— cycles</span>
+      <span id="opt-channel-count" class="chip green">— ch head</span>
     </div>
     <div class="opt-body">
       <div class="opt-col" id="results-col">
@@ -879,13 +947,48 @@ async function clearDeck() {
 }
 
 // ── Layer 2: Protocol ──────────────────────────────────────────────────────
+function updateProtoWellOptions() {
+  const nCh = parseInt(document.getElementById('proto-n-channels').value);
+  const sel = document.getElementById('proto-n-wells');
+  const note = document.getElementById('head-note');
+  const notes = {
+    8:   '8-channel: processes 8 wells per stroke across columns.',
+    96:  '96-channel: entire 96-well plate processed in a single stroke.',
+    384: '384-channel: entire 384-well plate processed in a single stroke.',
+  };
+  note.textContent = notes[nCh] || '';
+  // Adjust available well count options
+  sel.innerHTML = '';
+  if (nCh === 8) {
+    sel.innerHTML = `<option value="8">8 wells (1 column)</option>
+      <option value="24">24 wells (3 columns)</option>
+      <option value="48">48 wells (half plate)</option>
+      <option value="96" selected>96 wells (full plate)</option>`;
+  } else if (nCh === 96) {
+    sel.innerHTML = `<option value="96" selected>96 wells (full plate)</option>`;
+  } else if (nCh === 384) {
+    sel.innerHTML = `<option value="384" selected>384 wells (full plate)</option>`;
+  }
+}
+
+function updateHeadUI() {
+  const nCh = parseInt(document.querySelector('input[name="opt-n-channels"]:checked').value);
+  const impacts = {
+    8:   'Cap 8 → most cycles, maximum optimization headroom for CVRP.',
+    96:  'Cap 96 → all wells in 1 stroke; 1 cycle for a full 96-well plate.',
+    384: 'Cap 384 → all wells in 1 stroke; 1 cycle for a full 384-well plate.',
+  };
+  document.getElementById('head-impact').textContent = impacts[nCh] || '';
+}
+
 async function buildMediaChange() {
   const nWells = parseInt(document.getElementById('proto-n-wells').value);
   const aspVol = parseFloat(document.getElementById('proto-asp-vol').value);
   const dispVol = parseFloat(document.getElementById('proto-disp-vol').value);
+  const nChannels = parseInt(document.getElementById('proto-n-channels').value);
 
   const res = await api('/api/protocol/media_change', 'POST', {
-    n_wells: nWells, aspirate_vol: aspVol, dispense_vol: dispVol
+    n_wells: nWells, aspirate_vol: aspVol, dispense_vol: dispVol, n_channels: nChannels
   });
   if (res.errors) {
     toast(res.errors.join(' | '), 'error');
@@ -1006,8 +1109,12 @@ function drawArmPath(stepLog) {
 }
 
 // ── Layer 3: Optimizer ─────────────────────────────────────────────────────
+function getSelectedChannels() {
+  const el = document.querySelector('input[name="opt-n-channels"]:checked');
+  return el ? parseInt(el.value) : 8;
+}
+
 async function runOptimize() {
-  // Use actual task matrix from protocol if available, else generate
   await _doOptimize({
     n_src: parseInt(document.getElementById('opt-n-src').value),
     n_dst: parseInt(document.getElementById('opt-n-dst').value),
@@ -1016,17 +1123,20 @@ async function runOptimize() {
     alpha: parseFloat(document.getElementById('opt-alpha').value),
     beta: parseFloat(document.getElementById('opt-beta').value),
     time_limit_s: parseInt(document.getElementById('opt-time').value),
+    n_channels: getSelectedChannels(),
     seed: Math.floor(Math.random() * 10000),
   });
 }
 
 async function runRandomBenchmark() {
+  const nCh = getSelectedChannels();
   const seeds = [42, 123, 999, 7, 2025];
-  toast('Running 5-seed benchmark...', 'info');
+  toast(`Running 5-seed benchmark (${nCh}-channel head)...`, 'info');
   for (const seed of seeds) {
     await _doOptimize({
       n_src: 96, n_dst: 96, density: 0.3, volume_ul: 100,
-      alpha: 1.0, beta: 0.00333, time_limit_s: 8, seed
+      alpha: 1.0, beta: 0.00333, time_limit_s: 8,
+      n_channels: nCh, seed
     });
     await new Promise(r => setTimeout(r, 200));
   }
@@ -1048,6 +1158,9 @@ function renderOptResults(res) {
 
   document.getElementById('opt-job-count').textContent = `${res.n_jobs} jobs`;
   document.getElementById('opt-cycle-count').textContent = `${cvrp.n_cycles || '—'} cycles`;
+  // Show channel count in header if element exists
+  const chEl = document.getElementById('opt-channel-count');
+  if (chEl) chEl.textContent = `${res.n_channels || 8}-ch head`;
 
   const col = document.getElementById('results-col');
   const maxCost = Math.max(cvrp.total_cost||0, rowMajor.total_cost||0, greedy.total_cost||0, lap.total_cost||0) || 1;
@@ -1058,7 +1171,8 @@ function renderOptResults(res) {
 
   col.innerHTML = `
     <div style="margin-bottom:12px;">
-      <div class="section-title" style="margin-bottom:8px;"><span class="dot"></span>Cost Weights</div>
+      <div class="section-title" style="margin-bottom:8px;"><span class="dot"></span>Run Parameters</div>
+      <div class="prop-row"><span class="pk">Pipette head</span><span class="pv" style="color:var(--green)">${res.n_channels || 8}-channel</span></div>
       <div class="prop-row"><span class="pk">α (plate adj.)</span><span class="pv">${res.alpha}</span></div>
       <div class="prop-row"><span class="pk">β (deck travel)</span><span class="pv">${res.beta.toFixed(5)}</span></div>
       <div class="prop-row"><span class="pk">Jobs</span><span class="pv">${res.n_jobs}</span></div>
