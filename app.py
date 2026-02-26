@@ -50,12 +50,15 @@ def get_deck():
 @app.route("/api/deck/place", methods=["POST"])
 def place_labware():
     d = request.json
+    sample_map_raw = d.get("sample_map", {})
+    sample_map = {int(k): v for k, v in sample_map_raw.items()} if sample_map_raw else {}
     item = LabwareItem(
         labware_id=d["labware_id"],
         labware_type=d["labware_type"],
         deck_position=int(d["deck_position"]),
         role=d.get("role", "generic"),
         label=d.get("label", ""),
+        sample_map=sample_map,
     )
     ok = _deck.place(item)
     if not ok:
@@ -87,6 +90,33 @@ def clear_deck():
     return jsonify({"ok": True, "deck": _deck.to_dict()})
 
 
+@app.route("/api/deck/sample_map", methods=["POST"])
+def update_sample_map():
+    """
+    Set or update sample names for wells on a labware item.
+    Body: { deck_position: int, sample_map: {well_index: sample_name} }
+    """
+    d = request.json
+    pos = int(d["deck_position"])
+    item = _deck.positions.get(pos)
+    if item is None:
+        return jsonify({"error": f"No labware at position {pos}"}), 404
+    new_map = {int(k): v for k, v in d.get("sample_map", {}).items()}
+    item.sample_map.update(new_map)
+    return jsonify({"ok": True, "labware": item.to_dict()})
+
+
+@app.route("/api/deck/sample_map/clear", methods=["POST"])
+def clear_sample_map():
+    """Clear all sample names from a labware position."""
+    pos = int(request.json["deck_position"])
+    item = _deck.positions.get(pos)
+    if item is None:
+        return jsonify({"error": f"No labware at position {pos}"}), 404
+    item.sample_map.clear()
+    return jsonify({"ok": True, "labware": item.to_dict()})
+
+
 @app.route("/api/deck/distances", methods=["GET"])
 def deck_distances():
     """Return arm travel distance matrix between all occupied positions."""
@@ -104,7 +134,11 @@ def load_preset(preset_name: str):
     if preset_name not in presets:
         return jsonify({"error": f"Unknown preset '{preset_name}'"}), 404
     for item_data in presets[preset_name]:
-        item = LabwareItem(**item_data)
+        # Convert sample_map keys to int (JSON/dict may store them as strings)
+        d = dict(item_data)
+        if "sample_map" in d and d["sample_map"]:
+            d["sample_map"] = {int(k): v for k, v in d["sample_map"].items()}
+        item = LabwareItem(**d)
         _deck.place(item)
     return jsonify({"ok": True, "deck": _deck.to_dict()})
 
@@ -115,6 +149,36 @@ def list_presets():
 
 
 def _get_presets():
+    # Cherry-pick source plate sample map:
+    # 8 compounds across 24 wells (A1-C8), 3 concentration stocks per compound
+    cherry_src_map = {}
+    compounds = ["Erlotinib","Gefitinib","Imatinib","Sorafenib",
+                 "Vemurafenib","Crizotinib","Osimertinib","Lapatinib"]
+    concs = ["10mM","1mM","100µM"]
+    for ci, cmp in enumerate(compounds):
+        for si, stock in enumerate(concs):
+            well_idx = ci * 3 + si   # A1..A3=Erlotinib, A4..A6=Gefitinib, etc.
+            cherry_src_map[well_idx] = f"{cmp} {stock}"
+
+    # Destination plate well map: 8 compounds × 10 dose points (columns 1-10),
+    # duplicated in rows A-D (rep 1) and rows E-H (rep 2)
+    cherry_dst_map = {}
+    dose_labels = ["10µM","3µM","1µM","300nM","100nM","30nM","10nM","3nM","1nM","0nM"]
+    for ci, cmp in enumerate(compounds):
+        for di, dose in enumerate(dose_labels):
+            # Rep 1: rows A-D (rows 0-3), compound→row, dose→col
+            row1 = ci // 2
+            col1 = (ci % 2) * 10 + di   # compounds pair into double-row cols
+            # simpler: row = compound index mod 4, col pair
+            row1 = ci % 4
+            col1 = (ci // 4) * 10 + di
+            idx1 = row1 * 12 + col1
+            cherry_dst_map[idx1] = f"{cmp}@{dose} rep1"
+            # Rep 2: rows E-H (rows 4-7)
+            row2 = row1 + 4
+            idx2 = row2 * 12 + col1
+            cherry_dst_map[idx2] = f"{cmp}@{dose} rep2"
+
     return {
         "media_change_96": [
             {"labware_id": "dirty_tips",  "labware_type": "tiprack_200ul",  "deck_position": 1,  "role": "tips_dirty",  "label": "Dirty Tips"},
@@ -132,6 +196,26 @@ def _get_presets():
             {"labware_id": "compound",    "labware_type": "tube_rack_15ml", "deck_position": 11, "role": "source",      "label": "Compound"},
             {"labware_id": "plate1",      "labware_type": "96well_plate",   "deck_position": 20, "role": "destination", "label": "Assay Plate 1"},
             {"labware_id": "plate2",      "labware_type": "96well_plate",   "deck_position": 21, "role": "destination", "label": "Assay Plate 2"},
+        ],
+        "dose_response_cherry_pick": [
+            # Tips
+            {"labware_id": "tips1",    "labware_type": "tiprack_200ul",  "deck_position": 1,  "role": "tips_clean", "label": "Tips 1"},
+            {"labware_id": "tips2",    "labware_type": "tiprack_200ul",  "deck_position": 2,  "role": "tips_clean", "label": "Tips 2"},
+            {"labware_id": "tips3",    "labware_type": "tiprack_200ul",  "deck_position": 3,  "role": "tips_clean", "label": "Tips 3"},
+            # Waste
+            {"labware_id": "waste",    "labware_type": "waste_trough",   "deck_position": 4,  "role": "waste",      "label": "Waste"},
+            # DMSO diluent reservoir
+            {"labware_id": "dmso",     "labware_type": "reservoir_12",   "deck_position": 5,  "role": "reservoir",  "label": "DMSO Diluent"},
+            # Compound stock source plate (8 compounds × 3 stocks = 24 wells used)
+            {"labware_id": "stocks",   "labware_type": "96well_plate",   "deck_position": 14, "role": "source",
+             "label": "Compound Stocks", "sample_map": {str(k): v for k,v in cherry_src_map.items()}},
+            # Intermediate dilution plate (acoustic-to-acoustic, mid-deck)
+            {"labware_id": "intermed", "labware_type": "96well_plate",   "deck_position": 23, "role": "generic",    "label": "Intermediate Dilutions"},
+            # Two assay destination plates (far side of deck)
+            {"labware_id": "assay1",   "labware_type": "96well_plate",   "deck_position": 33, "role": "destination",
+             "label": "Assay Plate 1 (rep1)", "sample_map": {str(k): v for k,v in cherry_dst_map.items() if "rep1" in v}},
+            {"labware_id": "assay2",   "labware_type": "96well_plate",   "deck_position": 34, "role": "destination",
+             "label": "Assay Plate 2 (rep2)", "sample_map": {str(k): v for k,v in cherry_dst_map.items() if "rep2" in v}},
         ],
     }
 
@@ -292,7 +376,9 @@ def optimize():
 
     jobs = task_matrix_to_jobs(
         T, src_id, dst_id, src_pos, dst_pos,
-        src_cols=src_cols, dst_cols=dst_cols
+        src_cols=src_cols, dst_cols=dst_cols,
+        src_sample_map=src_item.sample_map if src_item else None,
+        dst_sample_map=dst_item.sample_map if dst_item else None,
     )
 
     if not jobs:
@@ -347,8 +433,12 @@ def optimize_random():
     time_limit = int(d.get("time_limit_s", 10))
     n_channels = int(d.get("n_channels", 8))
 
+    src_item2 = next((i for i in _deck.positions.values() if i and i.role=="source"), None)
+    dst_item2 = next((i for i in _deck.positions.values() if i and i.role=="destination"), None)
     jobs = task_matrix_to_jobs(T, "source", "destination", src_pos, dst_pos,
-                                src_cols=src_cols, dst_cols=dst_cols)
+                                src_cols=src_cols, dst_cols=dst_cols,
+                                src_sample_map=src_item2.sample_map if src_item2 else None,
+                                dst_sample_map=dst_item2.sample_map if dst_item2 else None)
     report = run_optimization(jobs, alpha=alpha, beta=beta, time_limit_s=time_limit,
                                n_channels=n_channels)
     summary = report.summary()
@@ -356,6 +446,93 @@ def optimize_random():
     summary["task_matrix"] = T.tolist()
     dm = report.distance_matrix
     summary["distance_matrix"] = {"data": dm.tolist(), "n": int(dm.shape[0])}
+    return jsonify(summary)
+
+
+@app.route("/api/optimize/cherry_pick", methods=["POST"])
+def optimize_cherry_pick():
+    """
+    Build and optimize a cherry-pick task matrix from the current deck.
+    Generates a realistic sparse multi-source → multi-destination transfer map
+    using the named samples on the source plate.
+
+    The task matrix is deliberately non-trivial:
+    - Each source well maps to 2-4 destination wells (replicates + dose points)
+    - Transfers are scattered non-contiguously across both plates
+    - This maximises CVRP optimization headroom vs row-major baseline
+
+    Math: the distance matrix D_extended[i,j] is built exactly as in the
+    random benchmark — well-adjacency term + deck-travel term. The sparsity
+    and non-contiguous structure of cherry-pick tasks is what makes CVRP
+    shine vs greedy/LAP: neighbours in the distance matrix are jobs that share
+    a nearby source well OR a nearby destination well, and the CVRP solver
+    batches these optimally within the n_channels capacity constraint.
+    """
+    d = request.json or {}
+    alpha = float(d.get("alpha", 1.0))
+    beta  = float(d.get("beta", 1.0 / 300.0))
+    time_limit = int(d.get("time_limit_s", 10))
+    n_channels = int(d.get("n_channels", 8))
+    seed = d.get("seed", 42)
+
+    src_item = next((i for i in _deck.positions.values() if i and i.role=="source"), None)
+    dst_item = next((i for i in _deck.positions.values() if i and i.role=="destination"), None)
+
+    if not src_item or not dst_item:
+        return jsonify({"error": "Need source and destination plates on deck"}), 400
+
+    n_src = src_item.cols * src_item.rows
+    n_dst = dst_item.cols * dst_item.rows
+    rng = np.random.default_rng(seed)
+
+    # Build a sparse cherry-pick task matrix:
+    # Each named source well transfers to 2-4 scattered destination wells.
+    # Unnamed wells have a 15% chance of being included (background transfers).
+    T = np.zeros((n_src, n_dst))
+
+    # Ensure sample_map has integer keys (preset JSON may have stored string keys)
+    int_sample_map = {int(k): v for k, v in src_item.sample_map.items()}
+    src_item.sample_map = int_sample_map  # fix in-place for job labelling too
+
+    named_wells = list(int_sample_map.keys())
+    if named_wells:
+        for src_well in named_wells:
+            # Each named sample → 2 to 4 destination wells (dose replicates)
+            n_hits = rng.integers(2, 5)
+            dst_wells = rng.choice(n_dst, size=int(n_hits), replace=False)
+            vol = float(rng.choice([50.0, 100.0, 200.0]))
+            for dw in dst_wells:
+                T[int(src_well), int(dw)] = vol
+
+    # Background sparse transfers from unnamed wells
+    unnamed = [i for i in range(n_src) if i not in int_sample_map]
+    for src_well in unnamed:
+        if rng.random() < 0.15:
+            n_hits = rng.integers(1, 3)
+            dst_wells = rng.choice(n_dst, size=int(n_hits), replace=False)
+            for dw in dst_wells:
+                T[int(src_well), int(dw)] = 100.0
+
+    jobs = task_matrix_to_jobs(
+        T,
+        src_item.labware_id, dst_item.labware_id,
+        src_item.deck_position, dst_item.deck_position,
+        src_cols=src_item.cols, dst_cols=dst_item.cols,
+        src_sample_map=src_item.sample_map,
+        dst_sample_map=dst_item.sample_map,
+    )
+
+    if not jobs:
+        return jsonify({"error": "No transfers generated — add named samples to source plate"}), 400
+
+    report = run_optimization(jobs, alpha=alpha, beta=beta, time_limit_s=time_limit,
+                               n_channels=n_channels)
+    summary = report.summary()
+    summary["jobs"] = [j.to_dict() for j in jobs]
+    summary["task_matrix"] = T.tolist()
+    dm = report.distance_matrix
+    summary["distance_matrix"] = {"data": dm.tolist(), "n": int(dm.shape[0])}
+    summary["preset"] = "dose_response_cherry_pick"
     return jsonify(summary)
 
 

@@ -101,10 +101,24 @@ class LabwareItem:
     deck_position: int       # 1–45
     role: str = "generic"    # e.g. "source", "destination", "tips_clean", "tips_dirty", "waste", "reservoir"
     label: str = ""
+    # sample_map: dict of well_index (int) → sample name (str)
+    # e.g. {0: "Erlotinib 10µM", 1: "Gefitinib 10µM", ...}
+    sample_map: Dict[int, str] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.label:
             self.label = LABWARE_TYPES[self.labware_type]["label"]
+
+    def well_name(self, flat_index: int) -> str:
+        """Human-readable well name: e.g. flat index 0 → 'A1', 13 → 'B2'."""
+        n_cols = self.cols
+        row = flat_index // n_cols
+        col = flat_index % n_cols
+        return f"{chr(65 + row)}{col + 1}"
+
+    def sample_at(self, flat_index: int) -> str:
+        """Return sample name for a well, or well name if unnamed."""
+        return self.sample_map.get(flat_index, self.well_name(flat_index))
 
     @property
     def xy(self) -> Tuple[float, float]:
@@ -122,6 +136,7 @@ class LabwareItem:
         lw = LABWARE_TYPES[self.labware_type]
         col, row = position_index_to_colrow(self.deck_position)
         x, y = self.xy
+        n_wells = lw["cols"] * lw["rows"]
         return {
             "labware_id": self.labware_id,
             "labware_type": self.labware_type,
@@ -137,6 +152,13 @@ class LabwareItem:
             "icon": lw["icon"],
             "well_cols": lw["cols"],
             "well_rows": lw["rows"],
+            "sample_map": {str(k): v for k, v in self.sample_map.items()},
+            # full well list with names for UI
+            "wells": [
+                {"index": i, "name": self.well_name(i),
+                 "sample": self.sample_map.get(i, "")}
+                for i in range(n_wells)
+            ],
         }
 
 

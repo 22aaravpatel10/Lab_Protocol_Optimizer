@@ -89,6 +89,8 @@ class Job:
     src_col: int = 0
     dst_row: int = 0
     dst_col: int = 0
+    src_well_name: str = ""   # e.g. "A1" or named sample "Erlotinib 10µM"
+    dst_well_name: str = ""   # e.g. "B3" or named destination
 
     def to_dict(self) -> dict:
         return {
@@ -104,6 +106,8 @@ class Job:
             "src_col": self.src_col,
             "dst_row": self.dst_row,
             "dst_col": self.dst_col,
+            "src_well_name": self.src_well_name,
+            "dst_well_name": self.dst_well_name,
         }
 
 
@@ -112,14 +116,25 @@ class Job:
 def task_matrix_to_jobs(T: np.ndarray,
                          src_labware_id: str, dst_labware_id: str,
                          src_deck_pos: int, dst_deck_pos: int,
-                         src_cols: int = 12, dst_cols: int = 12) -> List[Job]:
+                         src_cols: int = 12, dst_cols: int = 12,
+                         src_sample_map: Optional[dict] = None,
+                         dst_sample_map: Optional[dict] = None) -> List[Job]:
     """
     Convert a transfer task matrix T[n_src_wells × n_dst_wells] to a Job list.
     T[a, b] = volume to transfer from src well a to dst well b (0 = no transfer).
+
+    src_sample_map / dst_sample_map: optional {well_index: sample_name} dicts
+    from LabwareItem.sample_map, used to annotate each Job with human-readable names.
     """
+    def _well_label(flat_idx: int, n_cols: int, sample_map: Optional[dict]) -> str:
+        row, col = divmod(flat_idx, n_cols)
+        well_id = f"{chr(65+row)}{col+1}"
+        if sample_map and flat_idx in sample_map:
+            return f"{sample_map[flat_idx]} ({well_id})"
+        return well_id
+
     jobs = []
     job_id = 1
-    rows, cols = T.shape
     idxs = np.argwhere(T > 0)
     for (a, b) in idxs:
         vol = float(T[a, b])
@@ -136,6 +151,8 @@ def task_matrix_to_jobs(T: np.ndarray,
             src_col=int(a) % src_cols,
             dst_row=int(b) // dst_cols,
             dst_col=int(b) % dst_cols,
+            src_well_name=_well_label(int(a), src_cols, src_sample_map),
+            dst_well_name=_well_label(int(b), dst_cols, dst_sample_map),
         ))
         job_id += 1
     return jobs
@@ -147,10 +164,26 @@ def _well_distance_1d(r_a: int, c_a: int, r_b: int, c_b: int,
                       n_channels: int = 8) -> float:
     """
     Paper's well adjacency cost (D_src or D_dst component).
-    Two wells can be pipetted simultaneously (cost=0) if they share a column
-    and their row indices differ by < n_channels. Otherwise cost=1.
-    This is a simplified version of the paper's Eq.1 binary adjacency term.
+
+    8-channel head: simultaneous access requires same column AND rows within
+    the 8-row span (|row_a - row_b| < 8). Standard SBS column-wise pipetting.
+    Cost = 0 if same-column + adjacent rows; else 1.
+
+    96-channel head: the entire 96-well plate (8×12) is accessed in a single
+    stroke. Any two wells on the same plate are zero-cost — the head covers all
+    of them simultaneously. Cost = 0 always (same plate assumed by caller).
+
+    384-channel head: analogous — entire 384-well plate (16×24) in one stroke.
+    Cost = 0 always.
+
+    For 96 and 384-ch, n_channels >= 96 means the row span covers the entire
+    plate height, so the column check is irrelevant — all pairs cost 0.
     """
+    # 96-ch covers 8 rows × 12 cols; 384-ch covers 16 rows × 24 cols.
+    # In both cases the head spans the full plate in one stroke: cost always 0.
+    if n_channels >= 96:
+        return 0.0
+    # 8-channel: same column, rows within the 8-tip span
     if c_a == c_b and abs(r_a - r_b) < n_channels:
         return 0.0
     return 1.0

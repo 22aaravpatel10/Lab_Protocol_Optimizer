@@ -269,6 +269,36 @@ canvas { display: block; }
 .chip.green { background: rgba(34,197,94,.1); border-color: var(--green); color: var(--green); }
 .chip.amber { background: rgba(245,158,11,.1); border-color: var(--amber); color: var(--amber); }
 .chip.blue  { background: rgba(79,142,247,.1); border-color: var(--accent); color: var(--accent); }
+/* Stroke group header */
+.stroke-group { margin-bottom: 10px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.stroke-header { background: var(--surface2); padding: 7px 12px; display: flex; align-items: center;
+  gap: 8px; cursor: pointer; user-select: none; border-bottom: 1px solid var(--border); }
+.stroke-header:hover { background: rgba(79,142,247,.08); }
+.stroke-label { font-size: 11px; font-weight: 700; color: var(--accent); }
+.stroke-meta { font-size: 10px; color: var(--muted); flex: 1; }
+.stroke-time { font-size: 10px; font-family: var(--mono); color: var(--amber); }
+.stroke-body { padding: 4px; }
+.stroke-body .step-card { margin-bottom: 3px; border-radius: 5px; }
+/* Sample map editor */
+.well-grid { display: grid; gap: 2px; margin-top: 6px; }
+.well-cell { padding: 2px 4px; border-radius: 3px; border: 1px solid var(--border);
+  font-size: 8px; font-family: var(--mono); cursor: pointer; text-align: center;
+  background: var(--surface2); transition: all .1s; min-height: 20px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.well-cell.named { border-color: var(--accent); background: rgba(79,142,247,.12); }
+.well-cell:hover { border-color: var(--green); }
+.well-name-label { font-size: 7px; color: var(--accent); max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Job table */
+.job-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.job-table th { background: var(--surface2); padding: 5px 8px; text-align: left;
+  font-size: 9px; color: var(--muted); font-weight: 700; text-transform: uppercase;
+  border-bottom: 1px solid var(--border); position: sticky; top: 0; }
+.job-table td { padding: 4px 8px; border-bottom: 1px solid rgba(46,51,82,.4);
+  font-family: var(--mono); }
+.job-table tr:hover td { background: rgba(79,142,247,.05); }
+.job-table .sample-name { font-family: var(--font); color: var(--text); font-size: 10px; }
+.job-table .well-id { color: var(--muted); font-size: 9px; }
 </style>
 </head>
 <body>
@@ -282,8 +312,9 @@ canvas { display: block; }
     <button class="tab-btn" onclick="switchLayer(3)">③ CVRP Optimizer</button>
   </div>
   <div class="spacer"></div>
-  <button class="btn" onclick="loadPreset('media_change_96')">📋 Media Change Preset</button>
-  <button class="btn" onclick="loadPreset('serial_dilution')">🧪 Serial Dilution Preset</button>
+  <button class="btn" onclick="loadPreset('media_change_96')">📋 Media Change</button>
+  <button class="btn" onclick="loadPreset('serial_dilution')">🧪 Serial Dilution</button>
+  <button class="btn primary" onclick="loadPreset('dose_response_cherry_pick')">💊 Dose-Response Cherry Pick</button>
 </div>
 
 <!-- ── Main ── -->
@@ -461,8 +492,11 @@ canvas { display: block; }
       <button class="btn primary" style="width:100%;margin-bottom:6px" onclick="runOptimize()">
         ⚡ Run CVRP Optimizer
       </button>
-      <button class="btn" style="width:100%" onclick="runRandomBenchmark()">
+      <button class="btn" style="width:100%;margin-bottom:6px" onclick="runRandomBenchmark()">
         🎲 Random Benchmark
+      </button>
+      <button class="btn success" style="width:100%" onclick="runCherryPick()">
+        💊 Cherry-Pick (named samples)
       </button>
     </div>
   </div>
@@ -557,6 +591,10 @@ canvas { display: block; }
         <div id="route-vis"></div>
         <div class="section-title" style="margin-top:14px;margin-bottom:8px;"><span class="dot"></span>Deck Travel (mm) by Method</div>
         <div id="travel-bars"></div>
+        <div class="section-title" style="margin-top:14px;margin-bottom:8px;"><span class="dot"></span>Transfer Jobs</div>
+        <div id="job-table-wrap" style="overflow-x:auto;max-height:220px;overflow-y:auto;">
+          <div style="color:var(--muted);font-size:11px;">Run optimizer to see job list.</div>
+        </div>
       </div>
     </div>
   </div>
@@ -579,6 +617,20 @@ canvas { display: block; }
   <div class="section">
     <div class="section-title"><span class="dot"></span>Layout Summary</div>
     <div id="layout-summary"></div>
+  </div>
+  <div class="section" id="sample-map-section">
+    <div class="section-title"><span class="dot"></span>Well Sample Names
+      <span style="margin-left:auto;font-size:9px;color:var(--muted);font-weight:400;text-transform:none;">
+        Click a cell to name it
+      </span>
+    </div>
+    <div class="field-group" style="margin-bottom:6px;">
+      <label>Plate to edit</label>
+      <select id="sample-map-labware" class="role-select" onchange="renderWellGrid()">
+        <option value="">— select a plate —</option>
+      </select>
+    </div>
+    <div id="well-grid-container"></div>
   </div>
   <div class="section" id="paper-ref">
     <div class="section-title"><span class="dot"></span>Reference</div>
@@ -628,6 +680,23 @@ canvas { display: block; }
     <div class="modal-footer">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="confirmPlace()">Place</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sample name modal -->
+<div class="modal-overlay" id="sample-modal" style="display:none" onclick="closeSampleModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3>Name Well <span id="sample-modal-well"></span></h3>
+    <div class="field-group">
+      <label>Sample / Compound Name</label>
+      <input type="text" id="sample-modal-input" placeholder="e.g. Erlotinib 10mM"
+        onkeydown="if(event.key==='Enter') confirmSampleName()">
+    </div>
+    <div class="modal-footer">
+      <button class="btn danger" onclick="clearSampleName()">Clear</button>
+      <button class="btn" onclick="closeSampleModal()">Cancel</button>
+      <button class="btn primary" onclick="confirmSampleName()">Save</button>
     </div>
   </div>
 </div>
@@ -833,26 +902,6 @@ function renderDeck() {
 }
 let distPos1_xy = null;
 
-function updateLayoutSummary() {
-  if (!deckData) return;
-  const roles = {};
-  for (const cell of deckData.grid) {
-    if (cell.occupied) {
-      const r = cell.labware.role;
-      roles[r] = (roles[r] || 0) + 1;
-    }
-  }
-  const el = document.getElementById('layout-summary');
-  if (Object.keys(roles).length === 0) {
-    el.innerHTML = '<div style="color:var(--muted);font-size:11px;">Empty deck</div>';
-    return;
-  }
-  el.innerHTML = Object.entries(roles).map(([r,n]) =>
-    `<div class="prop-row"><span class="pk">${r.replace('_',' ')}</span>
-     <span class="pv lw-role role-${r}" style="display:inline">${n}</span></div>`
-  ).join('');
-}
-
 // ── Palette ────────────────────────────────────────────────────────────────
 function buildPalette() {
   const container = document.getElementById('palette');
@@ -1004,26 +1053,117 @@ function renderProtocol(proto, sim) {
   const list = document.getElementById('step-list');
   list.innerHTML = '';
 
+  // ── Group steps into stroke cycles ───────────────────────────────────────
+  // A stroke cycle = one complete pipetting action (pick→aspirate→dispense→park)
+  // We detect cycle boundaries by PICK_TIPS steps: each PICK_TIPS starts a new cycle.
+  const cycles = [];
+  let currentCycle = null;
   for (const step of proto.steps) {
-    const log = protoStepLog.find(l => l.step_id === step.step_id) || {};
-    const card = document.createElement('div');
-    card.className = 'step-card';
-    card.innerHTML = `
-      <div class="step-num">${step.step_id}</div>
-      <div style="flex:1">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-          <span class="step-type-badge st-${step.step_type}">${step.step_type.replace('_',' ')}</span>
-          ${log.errors && log.errors.length ? `<span class="step-err">⚠ ${log.errors[0]}</span>` : ''}
+    if (step.step_type === 'PICK_TIPS') {
+      currentCycle = { steps: [], label: '' };
+      cycles.push(currentCycle);
+    }
+    if (currentCycle) currentCycle.steps.push(step);
+    else { currentCycle = { steps: [step], label: '' }; cycles.push(currentCycle); }
+  }
+
+  // If no PICK_TIPS found (custom proto), fall through to flat display
+  const useGroups = cycles.length > 1 || (cycles.length === 1 && cycles[0].steps.some(s => s.step_type === 'PICK_TIPS'));
+
+  if (useGroups && cycles.length > 0) {
+    cycles.forEach((cycle, ci) => {
+      // Compute cycle aggregate stats from step log
+      const cycleStepIds = new Set(cycle.steps.map(s => s.step_id));
+      const cycleLogs = protoStepLog.filter(l => cycleStepIds.has(l.step_id));
+      const cycleTotalTime = cycleLogs.reduce((a, l) => a + (l.step_time_s || 0), 0);
+      const cycleTravelMM = cycleLogs.reduce((a, l) => a + (l.arm_travel_mm || 0), 0);
+      const cycleHasErrors = cycleLogs.some(l => l.errors && l.errors.length > 0);
+
+      // Determine phase from ASPIRATE step description
+      const aspStep = cycle.steps.find(s => s.step_type === 'ASPIRATE');
+      const dispStep = cycle.steps.find(s => s.step_type === 'DISPENSE');
+      const pickStep = cycle.steps.find(s => s.step_type === 'PICK_TIPS');
+      const phaseName = aspStep
+        ? (aspStep.description.toLowerCase().includes('waste') || aspStep.description.toLowerCase().includes('old') || (dispStep?.description || '').toLowerCase().includes('waste')
+            ? '🗑 Remove old media' : '💧 Add fresh media')
+        : `Cycle ${ci + 1}`;
+      const tipType = pickStep?.description.toLowerCase().includes('clean') ? 'Clean tips' : pickStep?.description.toLowerCase().includes('dirty') ? 'Dirty tips' : '';
+
+      // Build group wrapper
+      const groupEl = document.createElement('div');
+      groupEl.className = 'stroke-group';
+
+      // well_indices are nested inside well_selection in the step dict
+      const nWellsInCycle = (aspStep?.well_selection?.well_indices?.length)
+        || (aspStep?.well_selection?.n_channels)
+        || 0;
+      groupEl.innerHTML = `
+        <div class="stroke-header" onclick="toggleStrokeGroup(this)">
+          <span style="font-size:12px;">▾</span>
+          <span class="stroke-label">${phaseName}</span>
+          <span class="stroke-meta">${tipType ? `· ${tipType}` : ''} ${nWellsInCycle ? `· ${nWellsInCycle} wells` : ''} · ${cycle.steps.length} steps</span>
+          <span class="stroke-time">⏱ ${cycleTotalTime.toFixed(2)}s ✈ ${cycleTravelMM.toFixed(0)}mm${cycleHasErrors ? ' ⚠' : ''}</span>
         </div>
-        <div class="step-desc">${step.description}</div>
-        <div style="display:flex;gap:10px;margin-top:4px;">
-          <span class="step-time">⏱ ${(log.step_time_s||0).toFixed(2)}s (cum: ${(log.cumulative_time_s||0).toFixed(1)}s)</span>
-          ${log.arm_travel_mm > 0 ? `<span class="step-travel">✈ ${log.arm_travel_mm.toFixed(0)}mm</span>` : ''}
-          ${step.deck_position ? `<span style="font-size:10px;color:var(--muted)">→ P${step.deck_position}</span>` : ''}
+        <div class="stroke-body" id="sg-body-${ci}"></div>
+      `;
+      list.appendChild(groupEl);
+
+      const body = groupEl.querySelector('.stroke-body');
+      cycle.steps.forEach(step => {
+        const log = protoStepLog.find(l => l.step_id === step.step_id) || {};
+        const card = document.createElement('div');
+        card.className = 'step-card';
+        card.innerHTML = `
+          <div class="step-num">${step.step_id}</div>
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+              <span class="step-type-badge st-${step.step_type}">${step.step_type.replace('_',' ')}</span>
+              ${log.errors && log.errors.length ? `<span class="step-err">⚠ ${log.errors[0]}</span>` : ''}
+            </div>
+            <div class="step-desc">${step.description}</div>
+            <div style="display:flex;gap:10px;margin-top:4px;">
+              <span class="step-time">⏱ ${(log.step_time_s||0).toFixed(2)}s (cum: ${(log.cumulative_time_s||0).toFixed(1)}s)</span>
+              ${(log.arm_travel_mm||0) > 0 ? `<span class="step-travel">✈ ${log.arm_travel_mm.toFixed(0)}mm</span>` : ''}
+              ${step.deck_position ? `<span style="font-size:10px;color:var(--muted)">→ P${step.deck_position}</span>` : ''}
+            </div>
+          </div>
+        `;
+        body.appendChild(card);
+      });
+    });
+
+    // Summary line: n_cycles × n_wells per stroke
+    const nCycles = cycles.length;
+    const firstAsp = proto.steps.find(s => s.step_type === 'ASPIRATE');
+    const wellsPerStroke = firstAsp?.well_selection?.well_indices?.length || firstAsp?.well_selection?.n_channels || '?';
+    const infoEl = document.createElement('div');
+    infoEl.style.cssText = 'font-size:10px;color:var(--muted);padding:8px 12px;text-align:center;';
+    infoEl.textContent = `${nCycles} stroke cycle${nCycles!==1?'s':''} · ${wellsPerStroke} wells/stroke · click headers to collapse`;
+    list.insertBefore(infoEl, list.firstChild);
+
+  } else {
+    // Flat display fallback
+    for (const step of proto.steps) {
+      const log = protoStepLog.find(l => l.step_id === step.step_id) || {};
+      const card = document.createElement('div');
+      card.className = 'step-card';
+      card.innerHTML = `
+        <div class="step-num">${step.step_id}</div>
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+            <span class="step-type-badge st-${step.step_type}">${step.step_type.replace('_',' ')}</span>
+            ${log.errors && log.errors.length ? `<span class="step-err">⚠ ${log.errors[0]}</span>` : ''}
+          </div>
+          <div class="step-desc">${step.description}</div>
+          <div style="display:flex;gap:10px;margin-top:4px;">
+            <span class="step-time">⏱ ${(log.step_time_s||0).toFixed(2)}s (cum: ${(log.cumulative_time_s||0).toFixed(1)}s)</span>
+            ${(log.arm_travel_mm||0) > 0 ? `<span class="step-travel">✈ ${log.arm_travel_mm.toFixed(0)}mm</span>` : ''}
+            ${step.deck_position ? `<span style="font-size:10px;color:var(--muted)">→ P${step.deck_position}</span>` : ''}
+          </div>
         </div>
-      </div>
-    `;
-    list.appendChild(card);
+      `;
+      list.appendChild(card);
+    }
   }
 
   // Update summary chips
@@ -1048,6 +1188,14 @@ function renderProtocol(proto, sim) {
 
   // Draw arm path
   drawArmPath(protoStepLog);
+}
+
+function toggleStrokeGroup(headerEl) {
+  const body = headerEl.nextElementSibling;
+  const arrow = headerEl.querySelector('span:first-child');
+  const collapsed = body.style.display === 'none';
+  body.style.display = collapsed ? '' : 'none';
+  arrow.textContent = collapsed ? '▾' : '▸';
 }
 
 function drawArmPath(stepLog) {
@@ -1149,71 +1297,6 @@ async function _doOptimize(params) {
   switchLayer(3);
 }
 
-function renderOptResults(res) {
-  const methods = res.methods || {};
-  const cvrp = methods.cvrp_or_tools || {};
-  const rowMajor = methods.row_major || {};
-  const greedy = methods.greedy || {};
-  const lap = methods.lap || {};
-
-  document.getElementById('opt-job-count').textContent = `${res.n_jobs} jobs`;
-  document.getElementById('opt-cycle-count').textContent = `${cvrp.n_cycles || '—'} cycles`;
-  // Show channel count in header if element exists
-  const chEl = document.getElementById('opt-channel-count');
-  if (chEl) chEl.textContent = `${res.n_channels || 8}-ch head`;
-
-  const col = document.getElementById('results-col');
-  const maxCost = Math.max(cvrp.total_cost||0, rowMajor.total_cost||0, greedy.total_cost||0, lap.total_cost||0) || 1;
-  const maxMM = Math.max(cvrp.total_travel_mm||0, rowMajor.total_travel_mm||0, greedy.total_travel_mm||0, lap.total_travel_mm||0) || 1;
-
-  const improvements = res.improvements || {};
-  const savings = res.deck_travel_savings_mm || {};
-
-  col.innerHTML = `
-    <div style="margin-bottom:12px;">
-      <div class="section-title" style="margin-bottom:8px;"><span class="dot"></span>Run Parameters</div>
-      <div class="prop-row"><span class="pk">Pipette head</span><span class="pv" style="color:var(--green)">${res.n_channels || 8}-channel</span></div>
-      <div class="prop-row"><span class="pk">α (plate adj.)</span><span class="pv">${res.alpha}</span></div>
-      <div class="prop-row"><span class="pk">β (deck travel)</span><span class="pv">${res.beta.toFixed(5)}</span></div>
-      <div class="prop-row"><span class="pk">Jobs</span><span class="pv">${res.n_jobs}</span></div>
-    </div>
-
-    ${renderMethodCard('CVRP (OR-Tools)', 'cvrp', cvrp, maxCost, maxMM, true)}
-    ${renderMethodCard('Row-Major Baseline', 'row_major', rowMajor, maxCost, maxMM, false)}
-    ${renderMethodCard('Greedy Nearest', 'greedy', greedy, maxCost, maxMM, false)}
-    ${renderMethodCard('Long-Axis Priority (LAP)', 'lap', lap, maxCost, maxMM, false)}
-
-    <div style="margin-top:12px;background:var(--surface2);border-radius:8px;padding:12px;border:1px solid var(--border);">
-      <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--green);">✅ CVRP Improvements</div>
-      <div class="metric-row">
-        <span class="label">vs Row-Major</span>
-        <span class="val" style="color:var(--green)">${improvements['vs_row_major_%'] !== null ? improvements['vs_row_major_%']+'%' : '—'}</span>
-      </div>
-      <div class="metric-row">
-        <span class="label">vs Greedy</span>
-        <span class="val" style="color:var(--green)">${improvements['vs_greedy_%'] !== null ? improvements['vs_greedy_%']+'%' : '—'}</span>
-      </div>
-      <div class="metric-row">
-        <span class="label">vs LAP</span>
-        <span class="val" style="color:var(--green)">${improvements['vs_lap_%'] !== null ? improvements['vs_lap_%']+'%' : '—'}</span>
-      </div>
-      <div class="metric-row">
-        <span class="label">Deck travel saved vs Row-Major</span>
-        <span class="val" style="color:var(--amber)">${savings['vs_row_major'] !== undefined ? savings['vs_row_major'].toFixed(0)+' mm' : '—'}</span>
-      </div>
-    </div>
-  `;
-
-  // Route visualization
-  renderRoutes(cvrp.routes || []);
-
-  // Heatmap
-  if (res.distance_matrix) drawHeatmap(res.distance_matrix);
-
-  // Travel bars
-  renderTravelBars({cvrp, row_major: rowMajor, greedy, lap}, maxMM);
-}
-
 function renderMethodCard(name, key, data, maxCost, maxMM, isWinner) {
   const pct = maxCost > 0 ? (data.total_cost / maxCost * 100) : 0;
   return `
@@ -1303,6 +1386,299 @@ function drawHeatmap(dmData) {
   ctx.fillStyle = 'white';
   ctx.font = '9px monospace';
   ctx.fillText(`${n}×${n} distance matrix  max=${maxVal.toFixed(2)}`, 4, H-3);
+}
+
+// ── Cherry-pick optimizer ──────────────────────────────────────────────────
+async function runCherryPick() {
+  const nCh = getSelectedChannels();
+  const alpha = parseFloat(document.getElementById('opt-alpha').value);
+  const beta  = parseFloat(document.getElementById('opt-beta').value);
+  const timeLim = parseInt(document.getElementById('opt-time').value);
+
+  toast('Building dose-response cherry-pick task… loading preset first', 'info');
+
+  // Ensure dose_response_cherry_pick preset is loaded on deck
+  const presetRes = await api('/api/deck/presets/dose_response_cherry_pick', 'POST');
+  if (presetRes.error) { toast(presetRes.error, 'error'); return; }
+  await refreshDeck();
+
+  toast(`Running cherry-pick CVRP (${nCh}-ch head)…`, 'info');
+
+  const res = await api('/api/optimize/cherry_pick', 'POST', {
+    alpha, beta, time_limit_s: timeLim, n_channels: nCh, seed: 42
+  });
+  if (res.error) { toast(res.error, 'error'); return; }
+
+  renderOptResults(res);
+  switchLayer(3);
+  const savings = res.deck_travel_savings_mm || {};
+  const vs = savings['vs_row_major'];
+  toast(`Cherry-pick CVRP done! ${vs !== undefined ? vs.toFixed(0) + ' mm saved vs row-major' : ''}`, 'success');
+}
+
+// ── Updated renderOptResults with job table ────────────────────────────────
+function renderOptResults(res) {
+  const methods = res.methods || {};
+  const cvrp = methods.cvrp_or_tools || {};
+  const rowMajor = methods.row_major || {};
+  const greedy = methods.greedy || {};
+  const lap = methods.lap || {};
+
+  document.getElementById('opt-job-count').textContent = `${res.n_jobs} jobs`;
+  document.getElementById('opt-cycle-count').textContent = `${cvrp.n_cycles || '—'} cycles`;
+  const chEl = document.getElementById('opt-channel-count');
+  if (chEl) chEl.textContent = `${res.n_channels || 8}-ch head`;
+
+  const col = document.getElementById('results-col');
+  const maxCost = Math.max(cvrp.total_cost||0, rowMajor.total_cost||0, greedy.total_cost||0, lap.total_cost||0) || 1;
+  const maxMM = Math.max(cvrp.total_travel_mm||0, rowMajor.total_travel_mm||0, greedy.total_travel_mm||0, lap.total_travel_mm||0) || 1;
+
+  const improvements = res.improvements || {};
+  const savings = res.deck_travel_savings_mm || {};
+
+  const isCherry = res.preset === 'dose_response_cherry_pick';
+
+  col.innerHTML = `
+    <div style="margin-bottom:12px;">
+      <div class="section-title" style="margin-bottom:8px;"><span class="dot"></span>Run Parameters</div>
+      ${isCherry ? `<div style="font-size:10px;padding:5px 8px;background:rgba(34,197,94,.1);border-radius:5px;border-left:2px solid var(--green);margin-bottom:8px;color:var(--green);">💊 Dose-Response Cherry-Pick · 8 kinase inhibitors × 3 stocks → 80 assay wells</div>` : ''}
+      <div class="prop-row"><span class="pk">Pipette head</span><span class="pv" style="color:var(--green)">${res.n_channels || 8}-channel</span></div>
+      <div class="prop-row"><span class="pk">α (plate adj.)</span><span class="pv">${res.alpha}</span></div>
+      <div class="prop-row"><span class="pk">β (deck travel)</span><span class="pv">${(res.beta||0).toFixed(5)}</span></div>
+      <div class="prop-row"><span class="pk">Jobs</span><span class="pv">${res.n_jobs}</span></div>
+    </div>
+
+    ${renderMethodCard('CVRP (OR-Tools)', 'cvrp', cvrp, maxCost, maxMM, true)}
+    ${renderMethodCard('Row-Major Baseline', 'row_major', rowMajor, maxCost, maxMM, false)}
+    ${renderMethodCard('Greedy Nearest', 'greedy', greedy, maxCost, maxMM, false)}
+    ${renderMethodCard('Long-Axis Priority (LAP)', 'lap', lap, maxCost, maxMM, false)}
+
+    <div style="margin-top:12px;background:var(--surface2);border-radius:8px;padding:12px;border:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--green);">✅ CVRP Improvements</div>
+      <div class="metric-row">
+        <span class="label">vs Row-Major</span>
+        <span class="val" style="color:var(--green)">${improvements['vs_row_major_%'] !== null ? improvements['vs_row_major_%']+'%' : '—'}</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">vs Greedy</span>
+        <span class="val" style="color:var(--green)">${improvements['vs_greedy_%'] !== null ? improvements['vs_greedy_%']+'%' : '—'}</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">vs LAP</span>
+        <span class="val" style="color:var(--green)">${improvements['vs_lap_%'] !== null ? improvements['vs_lap_%']+'%' : '—'}</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Deck travel saved vs Row-Major</span>
+        <span class="val" style="color:var(--amber)">${savings['vs_row_major'] !== undefined ? savings['vs_row_major'].toFixed(0)+' mm' : '—'}</span>
+      </div>
+    </div>
+  `;
+
+  // Route visualization
+  renderRoutes(cvrp.routes || []);
+
+  // Heatmap
+  if (res.distance_matrix) drawHeatmap(res.distance_matrix);
+
+  // Travel bars
+  renderTravelBars({cvrp, row_major: rowMajor, greedy, lap}, maxMM);
+
+  // Job table
+  renderJobTable(res.jobs || []);
+}
+
+function renderJobTable(jobs) {
+  const wrap = document.getElementById('job-table-wrap');
+  if (!jobs || jobs.length === 0) {
+    wrap.innerHTML = '<div style="color:var(--muted);font-size:11px;">No jobs.</div>';
+    return;
+  }
+  // Show first 200 jobs max for perf
+  const display = jobs.slice(0, 200);
+  const hasNames = jobs.some(j => j.src_well_name && j.src_well_name !== j.src_well_name.match(/^[A-P]\d+$/) || j.dst_well_name && j.dst_well_name !== j.dst_well_name.match(/^[A-P]\d+$/));
+  wrap.innerHTML = `
+    <table class="job-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Source</th>
+          <th>Destination</th>
+          <th>Vol (µL)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${display.map((j, i) => `
+          <tr>
+            <td style="color:var(--muted)">J${i+1}</td>
+            <td>
+              <div class="sample-name">${escHtml(j.src_well_name || j.src_well || '')}</div>
+              <div class="well-id">${j.src_labware_id || ''}</div>
+            </td>
+            <td>
+              <div class="sample-name">${escHtml(j.dst_well_name || j.dst_well || '')}</div>
+              <div class="well-id">${j.dst_labware_id || ''}</div>
+            </td>
+            <td>${(j.volume_ul||0).toFixed(0)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    ${jobs.length > 200 ? `<div style="font-size:10px;color:var(--muted);padding:6px;text-align:center;">Showing 200 of ${jobs.length} jobs</div>` : ''}
+  `;
+}
+
+function escHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Sample map editor ──────────────────────────────────────────────────────
+let _sampleModalDeckPos = null;
+let _sampleModalWellIdx = null;
+
+function updateLayoutSummary() {
+  if (!deckData) return;
+  const roles = {};
+  const plates = [];  // labware items that can have wells named
+  for (const cell of deckData.grid) {
+    if (cell.occupied) {
+      const r = cell.labware.role;
+      roles[r] = (roles[r] || 0) + 1;
+      // Plates with multiple wells are candidates for sample naming
+      if (cell.labware.well_cols > 1 || cell.labware.well_rows > 1) {
+        plates.push({ pos: cell.position, label: cell.labware.label, lw: cell.labware });
+      }
+    }
+  }
+  const el = document.getElementById('layout-summary');
+  if (Object.keys(roles).length === 0) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:11px;">Empty deck</div>';
+  } else {
+    el.innerHTML = Object.entries(roles).map(([r,n]) =>
+      `<div class="prop-row"><span class="pk">${r.replace('_',' ')}</span>
+       <span class="pv lw-role role-${r}" style="display:inline">${n}</span></div>`
+    ).join('');
+  }
+
+  // Populate sample-map labware selector
+  const sel = document.getElementById('sample-map-labware');
+  const curVal = sel.value;
+  sel.innerHTML = '<option value="">— select a plate —</option>';
+  for (const p of plates) {
+    const named = Object.keys(p.lw.sample_map || {}).length;
+    const opt = document.createElement('option');
+    opt.value = p.pos;
+    opt.textContent = `P${p.pos} · ${p.label}${named > 0 ? ` (${named} named)` : ''}`;
+    if (String(curVal) === String(p.pos)) opt.selected = true;
+    sel.appendChild(opt);
+  }
+
+  // Re-render well grid if a plate is selected
+  if (sel.value) renderWellGrid();
+}
+
+function renderWellGrid() {
+  const sel = document.getElementById('sample-map-labware');
+  const pos = parseInt(sel.value);
+  const container = document.getElementById('well-grid-container');
+  if (!pos || !deckData) { container.innerHTML = ''; return; }
+
+  const cell = deckData.grid.find(c => c.position === pos);
+  if (!cell || !cell.occupied) { container.innerHTML = '<div style="color:var(--muted);font-size:11px;">No labware here.</div>'; return; }
+
+  const lw = cell.labware;
+  const nCols = lw.well_cols;
+  const nRows = lw.well_rows;
+  const sampleMap = lw.sample_map || {};
+
+  // Size the grid cells according to column count
+  const cellPx = nCols <= 12 ? 20 : 11;
+
+  const grid = document.createElement('div');
+  grid.className = 'well-grid';
+  grid.style.gridTemplateColumns = `repeat(${nCols}, ${cellPx}px)`;
+
+  for (let row = 0; row < nRows; row++) {
+    for (let col = 0; col < nCols; col++) {
+      const idx = row * nCols + col;
+      const wellId = `${String.fromCharCode(65 + row)}${col + 1}`;
+      const sampleName = sampleMap[idx] || '';
+
+      const cellEl = document.createElement('div');
+      cellEl.className = 'well-cell' + (sampleName ? ' named' : '');
+      cellEl.title = sampleName ? `${wellId}: ${sampleName}` : wellId;
+      cellEl.innerHTML = `<span>${wellId}</span>${sampleName ? `<span class="well-name-label">${escHtml(sampleName)}</span>` : ''}`;
+      cellEl.onclick = () => openSampleModal(pos, idx, wellId, sampleName);
+      grid.appendChild(cellEl);
+    }
+  }
+
+  const named = Object.keys(sampleMap).length;
+  container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <span style="font-size:10px;color:var(--muted);">${lw.label} · ${nRows}×${nCols}</span>
+      <span class="chip blue">${named}/${nRows*nCols} named</span>
+    </div>
+  `;
+  container.appendChild(grid);
+
+  if (named > 0) {
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn danger';
+    clearBtn.style.cssText = 'width:100%;margin-top:8px;font-size:11px;';
+    clearBtn.textContent = '🗑 Clear all sample names';
+    clearBtn.onclick = () => clearAllSampleNames(pos);
+    container.appendChild(clearBtn);
+  }
+}
+
+function openSampleModal(deckPos, wellIdx, wellId, currentName) {
+  _sampleModalDeckPos = deckPos;
+  _sampleModalWellIdx = wellIdx;
+  document.getElementById('sample-modal-well').textContent = wellId;
+  document.getElementById('sample-modal-input').value = currentName || '';
+  document.getElementById('sample-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('sample-modal-input').focus(), 50);
+}
+
+function closeSampleModal(e) {
+  if (!e || e.target === document.getElementById('sample-modal'))
+    document.getElementById('sample-modal').style.display = 'none';
+}
+
+async function confirmSampleName() {
+  const name = document.getElementById('sample-modal-input').value.trim();
+  document.getElementById('sample-modal').style.display = 'none';
+  if (_sampleModalDeckPos === null) return;
+
+  const res = await api('/api/deck/sample_map', 'POST', {
+    deck_position: _sampleModalDeckPos,
+    sample_map: { [_sampleModalWellIdx]: name }
+  });
+  if (res.error) { toast(res.error, 'error'); return; }
+
+  // Refresh deck data + re-render well grid
+  await refreshDeck();
+  toast(name ? `Named: ${name}` : 'Sample name cleared', name ? 'success' : 'info');
+}
+
+async function clearSampleName() {
+  document.getElementById('sample-modal').style.display = 'none';
+  if (_sampleModalDeckPos === null) return;
+
+  const res = await api('/api/deck/sample_map', 'POST', {
+    deck_position: _sampleModalDeckPos,
+    sample_map: { [_sampleModalWellIdx]: '' }
+  });
+  if (res.error) { toast(res.error, 'error'); return; }
+  await refreshDeck();
+  toast('Sample name cleared', 'info');
+}
+
+async function clearAllSampleNames(deckPos) {
+  const res = await api('/api/deck/sample_map/clear', 'POST', { deck_position: deckPos });
+  if (res.error) { toast(res.error, 'error'); return; }
+  await refreshDeck();
+  toast('All sample names cleared', 'info');
 }
 </script>
 </body>
